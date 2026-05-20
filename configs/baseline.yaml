@@ -1,0 +1,41 @@
+# Baseline experiment: SPY, 2005 → today, one signal, logistic regression.
+# This is the reference config new experiments are forked from.
+
+name: baseline_v1
+description: |
+  First real backtest. SPY only, single SMA-crossover signal, logistic regression
+  predicting "5-day forward return > 0". Establishes a numerical floor any
+  serious model has to beat.
+
+data:
+  source: yfinance        # "yfinance" or "synthetic"
+  tickers: [SPY]
+  start_date: 2005-01-01
+  end_date: 2026-05-01
+
+signals:
+  - name: sma_crossover
+    params:
+      fast: 50
+      slow: 200
+
+target:
+  type: forward_return_binary
+  horizon_days: 5         # was the return over the next N days positive?
+  threshold: 0.0          # > threshold → 1, else 0
+
+model:
+  type: logistic_regression
+  params:
+    C: 1.0
+    class_weight: balanced
+
+backtest:
+  cv: expanding_window
+  initial_train_years: 5
+  test_period_months: 12
+  transaction_cost_bps: 5  # 5 basis points (0.05%) per trade
+
+output:
+  report_html: true
+  predictions_json: true

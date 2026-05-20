@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Data caches (regeneratable)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Generated outputs
+reports/*
+!reports/.gitkeep
+artifacts/models/*
+!artifacts/models/.gitkeep
+artifacts/predictions/*
+!artifacts/predictions/.gitkeep
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
