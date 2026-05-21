@@ -17,7 +17,12 @@ import yaml
 
 from lidr_ml.backtest.engine import add_strategy_returns, expanding_window_backtest
 from lidr_ml.data.loaders import DataConfig, load_prices
-from lidr_ml.eval.metrics import by_year, classification_metrics, strategy_metrics
+from lidr_ml.eval.metrics import (
+    by_year,
+    classification_metrics,
+    performance_by_year,
+    strategy_metrics,
+)
 from lidr_ml.eval.report import write_report
 from lidr_ml.models import build_model
 from lidr_ml.signals import get_signal
@@ -94,10 +99,16 @@ def run_pipeline(config_path: Path) -> PipelineResult:
     )
     print(f"  Backtest produced {len(result.predictions)} OOS predictions across {len(result.splits)} splits")
 
-    # Forward returns for the strategy curve are aligned to the prediction date.
+    # The equity curve is marked to market with 1-day-forward returns, NOT the
+    # N-day classification target. The model takes a position on day t and earns
+    # the return realized from t to t+1. Using the N-day forward return here
+    # would compound the same multi-day window once per day — overlapping ~N
+    # times and badly inflating the curve. The N-day return stays purely as the
+    # classification target (`fwd_clean` above); it must not drive the equity.
+    daily_fwd_return = prices["close"].pct_change().shift(-1)
     preds_with_ret = add_strategy_returns(
         result.predictions,
-        forward_returns=fwd_clean.reindex(result.predictions.index),
+        forward_returns=daily_fwd_return.reindex(result.predictions.index),
         transaction_cost_bps=float(bt_cfg.get("transaction_cost_bps", 5.0)),
     )
 
@@ -108,7 +119,9 @@ def run_pipeline(config_path: Path) -> PipelineResult:
         result.predictions["y_proba_1"],
     )
     strat_m = strategy_metrics(preds_with_ret["strategy_equity"])
+    bench_m = strategy_metrics(preds_with_ret["buy_hold_equity"])
     yr = by_year(result.predictions)
+    perf_yr = performance_by_year(preds_with_ret)
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     out_dir = PROJECT_ROOT / "reports" / f"{name}-{stamp}"
@@ -118,8 +131,10 @@ def run_pipeline(config_path: Path) -> PipelineResult:
         config_dict=config,
         classification_metrics=cls_m,
         strategy_metrics=strat_m,
+        benchmark_metrics=bench_m,
         predictions_with_returns=preds_with_ret,
         by_year_df=yr,
+        performance_by_year_df=perf_yr,
     )
     print(f"  Report → {report_path}")
 
@@ -134,7 +149,7 @@ def run_pipeline(config_path: Path) -> PipelineResult:
             "config_name": name,
             "ticker": ticker,
             "generated_at": stamp,
-            "metrics": {"classification": cls_m, "strategy": strat_m},
+            "metrics": {"classification": cls_m, "strategy": strat_m, "benchmark": bench_m},
             "predictions": [
                 {
                     "date": d.strftime("%Y-%m-%d"),
@@ -155,4 +170,6 @@ def _json_default(o):
         return int(o)
     if isinstance(o, (np.floating,)):
         return float(o)
-    raise TypeError(f"Not JSON-serializable: {type(o)}")
+    if isinstance(o, np.bool_):
+        return bool(o)
+    raise TypeError(f"Not JSON-serializable: {type(o)!r}")

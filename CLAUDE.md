@@ -62,7 +62,7 @@ Reading top-down:
 4. **Target** (computed inline in `src/lidr_ml/pipeline.py::run_pipeline`) — for now, binary: was the *N*-day forward return positive? Will become 3-class (BUY/HOLD/SELL) once we have a useful model.
 5. **Backtest engine** (`src/lidr_ml/backtest/engine.py`) — expanding-window walk-forward. For each split: fit model on train slice, predict on test slice, store predictions. Never trains on data after the test period.
 6. **Model** (`src/lidr_ml/models/`) — pluggable. Today: logistic regression. Next: LightGBM, then a stacking meta-learner over both.
-7. **Eval + report** (`src/lidr_ml/eval/`) — metrics (accuracy, log loss, hit rate by year), equity curve assuming "go long when prediction = 1", HTML report written to `reports/<config>-<timestamp>/`.
+7. **Eval + report** (`src/lidr_ml/eval/`) — metrics (accuracy, log loss, hit rate by year), equity curve assuming "go long when prediction = 1", HTML report written to `reports/<config>-<timestamp>/`. The report shows a **Strategy vs Buy & Hold** comparison table (CAGR, Sharpe, max drawdown, final equity for both legs) and a **per-year performance** table (strategy vs buy-hold return + excess) so regime-dependence is visible. A **Summary** section at the top translates the config into English and states the out-of-sample span (derived from the predictions, not the raw data range). Both the top classification metrics and the per-year table show **base_logloss** (the no-skill floor = entropy of the base rate) beside log loss, and the comparison/per-year tables green/red-highlight whichever side wins. The equity curve is marked to market with **1-day-forward returns**, not the N-day classification target — see Key Decisions.
 
 Everything is wired together by `src/lidr_ml/pipeline.py::run_pipeline(config_path)`.
 
@@ -96,7 +96,7 @@ src/lidr_ml/
     report.py             HTML report generator (base64-embedded chart)
 reports/                  generated HTML reports (gitignored except .gitkeep)
 artifacts/
-  models/                 pickled trained models per run
+  models/                 (planned) final trained model — NOT yet written; backtest models are throwaway
   predictions/            JSON predictions consumed by lidr
 tests/
   test_no_lookahead.py    asserts every registered signal is lookahead-safe
@@ -112,30 +112,52 @@ Things future-Claude would benefit from knowing before touching related code.
 - **Lookahead bias is the #1 thing to guard against.** Every signal goes through `tests/test_no_lookahead.py`, which compares "value at time t computed from full series" vs. "value at time t computed from series truncated at t" and asserts they match. Easy to forget; catastrophic if missed. Do not add a signal without adding it to this test's registry.
 - **Backtests use expanding-window walk-forward, never random k-fold.** Time-series data leaks information across random splits. `sklearn.model_selection.TimeSeriesSplit` does the slicing.
 - **Synthetic data fallback exists for a reason.** The dev_synthetic config lets the pipeline run with no network, which makes CI, tests, and Cowork-sandbox verification trivial. Keep it functional. Do not delete it.
-- **Confidence values in lidr today are heuristics, not probabilities.** The whole point of this project is to fix that. Anything we ship back to lidr from here should be a calibrated probability (sklearn's `predict_proba`, or LightGBM's, calibrated via Platt scaling or isotonic regression if needed).
+- **Confidence values in lidr today are heuristics, not probabilities.** The whole point of this project is to fix that. Anything we ship back to lidr from here should be a calibrated probability (sklearn's `predict_proba`, or LightGBM's, calibrated via Platt scaling or isotonic regression if needed). Note: the baseline uses `class_weight=balanced`, which deliberately distorts output probabilities away from true frequencies (fine for the up/down decision, bad for calibration). When probabilities start going to the site, likely switch to `class_weight=None` plus an explicit calibration step.
+- **The report judges everything against a benchmark, never in absolute terms.** Metric values are uninterpretable alone, so the report always shows the no-skill floor (`base_logloss` = entropy of the base rate) next to log loss, and the buy-and-hold leg next to the strategy. Tables green/red-highlight whichever side wins (for log loss, green = below the floor; for the strategy, green = beats buy-and-hold; max drawdown is stored negative, so higher = better). Add any new comparison columns to the *right* of the existing benchmark.
+- **The backtest does NOT produce a deployable model.** Expanding-window walk-forward fits a fresh model per split, predicts that split's test slice, and discards it — the deliverable is the stitched out-of-sample prediction series, used only for evaluation. There is no single trained model and nothing is written to `artifacts/models/`. Creating the deployable model is a separate, not-yet-built step: fit once on all available data, then serialize. See Next Up.
 - **Transaction costs are modeled even in the stub.** Default 5 bps per trade. A strategy that's only profitable with zero costs is not a strategy. Baked into the equity curve from day one.
+- **The equity curve uses 1-day-forward returns, NOT the N-day classification target.** The model predicts an N-day-forward direction (the classification target), but the strategy is marked to market daily: position taken on day *t* earns the return from *t* to *t+1*. Compounding the N-day return on every daily row (the original bug) overlaps the same window ~N times and massively inflates the curve. Keep these two return series separate: `fwd_clean` (N-day) is the target only; `daily_fwd_return` drives the equity. Regression-tested in `tests/test_strategy_returns.py`.
 - **No survivorship-bias-free data yet.** yfinance only has currently-listed tickers. For SPY/QQQ/sector ETFs this is fine. For individual-stock backtests we'd want CRSP — out of scope for the personal-use phase, but worth flagging if/when results on individual names start looking suspiciously good.
 
 ## Next Up
 
 In rough priority order:
 
-1. **Port the remaining five lidr signals to Python**: `rsi`, `macd`, `bollinger`, `breakout`, `volume`. For each, write the Python version, register it, add a parity test against the TS implementation (run the TS version once over a fixed series, dump expected outputs to a JSON fixture, then assert the Python version matches).
-2. **Add LightGBM as a second base learner.** Drop-in: implement `models/lightgbm.py` against the same `Model` protocol, add a config that uses it.
-3. **Wire up MLflow for experiment tracking.** Replace the timestamped-folder report with proper logged runs. Web UI for comparing across configs.
-4. **Introduce stacking.** Once two base learners exist, add a `StackedModel` whose `fit` trains the base learners via out-of-fold predictions and then trains a meta-learner (logistic regression) on top.
-5. **Add regime features.** VIX level, yield-curve slope, 60-day realized vol. Fed into the meta-learner so it can lean on different base models in different environments.
-6. **Define and write the artifact JSON schema.** Decide what fields lidr needs (predicted class? probability? per-signal contribution?). Document the schema, version it (`schema_version: 1`), write to `artifacts/predictions/`.
-7. **Wire lidr's `/api/signals/[ticker]` to read the artifact.** That's the bridge moment. Coordinate with the lidr CLAUDE.md.
+1. **Build the TS→Python signal parity-test harness.** A shared fixed price series, a one-off TS script in lidr that dumps each signal's expected outputs to a JSON fixture, and a Python test asserting the ported signal matches. Prerequisite to porting more signals safely — prove the round-trip on the already-ported `sma_crossover` first.
+2. **Port the remaining five lidr signals to Python**: `rsi`, `macd`, `bollinger`, `breakout`, `volume`. Each registered, added to `tests/test_no_lookahead.py`, and parity-tested via the harness from #1.
+3. **Add a lightweight cross-run results log.** Append one row per run (config name, skill score = 1 − log_loss/base_logloss, CAGR & Sharpe vs buy-and-hold, max drawdown) to a CSV, so "did this change help?" is answerable without opening each HTML. Interim before MLflow.
+4. **Add LightGBM as a second base learner.** Drop-in: implement `models/lightgbm.py` against the same `Model` protocol, add a config that uses it.
+5. **Introduce stacking.** Once two base learners exist, add a `StackedModel` whose `fit` trains the base learners via out-of-fold predictions and then trains a meta-learner (logistic regression) on top.
+6. **Add regime features.** VIX level, yield-curve slope, 60-day realized vol. Fed into the meta-learner so it can lean on different base models in different environments.
+7. **Wire up MLflow for experiment tracking.** Replace the timestamped-folder report + CSV log with proper logged runs and a comparison UI.
+8. **Add a final-model fit + serialize step.** The backtest only evaluates (throwaway per-split models); nothing fits a model on all data or writes `artifacts/models/`. Before serving live predictions, fit one model on all available history, serialize it, and write the prediction artifact. Trigger: once a model beats buy-and-hold. Revisit `class_weight`/calibration here (see Key Decisions).
+9. **Define and write the artifact JSON schema.** Decide what fields lidr needs (predicted class? probability? per-signal contribution?). Document and version it (currently `schema_version: 1`, with `metrics.classification/strategy/benchmark`).
+10. **Wire lidr's `/api/signals/[ticker]` to read the artifact.** That's the bridge moment. Coordinate with the lidr CLAUDE.md.
 
 ## Active Task
 
-**Scaffolded by Cowork on 2026-05-19, verified on Boon's WSL machine same day.** End-to-end run works on both the synthetic config (offline) and the baseline config (SPY 2005–today via yfinance). First substantive iteration in Claude Code: tackle Next Up #1 — port the remaining signals starting with RSI (simplest after SMA).
+_Nothing currently in-flight._
+
+Iteration-readiness pass complete (2026-05-20 → 2026-05-21, see Recent Changes): equity-curve bug fixed; the report now answers "does the model beat buy-and-hold?" via a config Summary, Strategy-vs-Buy&Hold and per-year tables, base_logloss no-skill floors, and green/red highlighting; regression tests in place. The SPY baseline was run and reviewed end to end — the single-signal logistic model **underperforms buy-and-hold on every metric** (CAGR ~8.0% vs ~14.5%, Sharpe 0.67 vs 0.89, ~equal drawdown) and its log loss sits at the no-skill floor: no edge, exactly as expected for a one-feature baseline. That establishes the bar every real model must beat. Next: build the TS→Python parity-test harness (Next Up #1), then port the five remaining signals starting with RSI.
 
 <!-- Update this section when work is in progress. Replace with `_Nothing currently in-flight._`
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-21 — Report readability pass + SPY baseline review
+
+Made the backtest report self-explanatory and ran/reviewed the SPY baseline end to end. Report changes (`eval/report.py` + `eval/metrics.py`): added a **Summary** section translating the config into plain English plus a quick-reference table, stating the out-of-sample span (derived from predictions, not the raw data range); added **base_logloss** (no-skill floor = entropy of the base rate) to the top classification metrics and to the per-year table so log loss is interpretable against its floor; reordered **Buy & Hold before Strategy** in both the comparison and per-year tables (new comparison columns now append to the right); and added **green/red highlighting** — the Strategy column in the comparison table (green = beats buy-and-hold; higher = better, including negative-stored max drawdown), the `strategy_return`/`excess` cells in the per-year table (green = beat buy-and-hold that year by *relative* excess, even if the absolute return was negative), and the `log_loss` cell in the per-year table (green = below the no-skill floor). Verified by rendering the synthetic config and by extracted-function unit tests on the real source.
+
+SPY baseline finding (OOS 2010-10 → 2026-04, 3,914 days): the single-signal logistic model loses to buy-and-hold on every axis — final equity 3.28x vs 8.23x, CAGR ~8.0% vs ~14.5%, Sharpe 0.67 vs 0.89, essentially identical max drawdown (~−33.7%); accuracy (0.556) is below the base rate (0.613) and log loss (~0.693) sits at the no-skill floor. No edge — exactly what one trend feature should produce — and this is the floor every real model must clear. Also corrected a documentation point discovered in review: the pipeline never fits or saves a final model (the `artifacts/models/` folder is aspirational); the backtest's per-split models are throwaway. Added "fit + serialize a final model" as a Next Up item.
+
+Tooling note: the Cowork sandbox was reset mid-session and its mount intermittently served stale/truncated copies of freshly-edited files; verification was done against sandbox-local copies and extracted-function tests. The committed source on disk is authoritative.
+
+### 2026-05-20 — Iteration-readiness: equity-curve fix + strategy-vs-SPY reporting
+
+Made the backtest output trustworthy and able to answer the core question ("is this model better than just holding the index?") before any model work begins. Three changes. (1) **Fixed the overlapping-returns bug** in the equity curve: it was compounding the N-day-forward classification target (`horizon_days`, e.g. 5) on every daily row, counting the same multi-day window ~N times and badly inflating returns. The curve is now marked to market with 1-day-forward returns (`daily_fwd_return` in `pipeline.py`); the N-day return stays purely as the classification target. On the synthetic config this dropped final equity from a nonsensical ~9.4x to a realistic ~1.30x. (2) **Added a Strategy vs Buy & Hold comparison**: `strategy_metrics` is now also computed for the buy-and-hold leg, rendered as a side-by-side table (CAGR, Sharpe, max drawdown, final equity) in the HTML report, and added to the JSON artifact under `metrics.benchmark` (additive — `schema_version` stays 1, existing consumers unaffected). (3) **Added `performance_by_year()`** (`eval/metrics.py`) and a report section showing per-year strategy return vs buy-hold return and excess, so regime-dependence ("worked in the past, not recently") is visible at a glance. Added `tests/test_strategy_returns.py` with three regression tests (compounds each return once, cash days earn nothing, costs charged on position change); full suite is 5 tests, all green, plus a clean synthetic backtest. Also hardened `_json_default` to handle `np.bool_`.
+
+Note on tooling: Cowork's sandbox mount served a stale/truncated view of freshly-edited files during this session (file mtimes weren't advancing, so cached bytecode masked the edits), so verification was run against a sandbox-local copy of the tree. The committed source on disk is correct; if a future run sees "old" behavior after an edit, clear `__pycache__` and confirm the file mtime advanced.
 
 ### 2026-05-19 — Initial scaffold + first end-to-end run
 
