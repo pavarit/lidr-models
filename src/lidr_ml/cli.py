@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
@@ -18,7 +19,7 @@ app = typer.Typer(
 
 @app.command()
 def backtest(
-    config: Path = typer.Argument(..., exists=True, readable=True, help="Path to a YAML config file."),
+    config: Annotated[Path, typer.Argument(exists=True, readable=True, help="Path to a YAML config file.")],
 ) -> None:
     """Run the full backtest pipeline for a given config."""
     result = run_pipeline(config)
