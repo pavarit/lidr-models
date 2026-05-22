@@ -79,7 +79,6 @@ def run_pipeline(config_path: Path) -> PipelineResult:
     aligned = pd.concat([X, y.rename("__y__"), fwd_return.rename("__fwd__")], axis=1).dropna()
     X_clean = aligned[X.columns]
     y_clean = aligned["__y__"].astype(int)
-    fwd_clean = aligned["__fwd__"]
     print(f"  After alignment + dropna: {len(X_clean)} usable rows, base rate {y_clean.mean():.3f}")
 
     # 4. Backtest ------------------------------------------------------------
