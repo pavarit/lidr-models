@@ -25,6 +25,43 @@ Each run drops a self-contained HTML report into `reports/<config-name>-<timesta
 
 After `make install`, you can also invoke the CLI directly as `python -m lidr_ml backtest <config>` or via the installed console script `lidr-ml backtest <config>`.
 
+## Architecture
+
+One pipeline, top-to-bottom. Everything is invoked from [`src/lidr_ml/pipeline.py::run_pipeline`](src/lidr_ml/pipeline.py):
+
+```
+                  configs/<name>.yaml
+                          │
+                          ▼
+  ┌─────────────── pipeline.py::run_pipeline ───────────────┐
+  │                                                          │
+  │   data/loaders.py  →  signals/*.py  →  target builder    │
+  │   (yfinance cached    (SMA crossover    (N-day forward    │
+  │    or synthetic)       today; RSI/MACD   return > thr,    │
+  │                        coming)           binary)          │
+  │                                  │                        │
+  │                                  ▼                        │
+  │                       backtest/engine.py                  │
+  │                       (expanding-window walk-forward;     │
+  │                        fits a fresh model from models/*   │
+  │                        per split — today: logistic reg.)  │
+  │                                  │                        │
+  │                                  ▼                        │
+  │            eval/metrics.py + eval/report.py +             │
+  │            eval/results_log.py                            │
+  └──────────────────────────┬───────────────────────────────┘
+                             │
+        ┌────────────────────┼────────────────────┐
+        ▼                    ▼                    ▼
+   reports/<run>/    artifacts/predictions/   artifacts/
+   report.html       <run>.json (opt-in)      results_log.csv
+   (HTML + chart)    (JSON for lidr)          (one row appended)
+```
+
+**Stack**: Python 3.10+, pandas / numpy, scikit-learn (walk-forward CV + base learners), yfinance for data, PyYAML for configs, Typer for the CLI, Matplotlib for the embedded chart, pytest + ruff for tests + lint.
+
+The HTML report contains: a config summary, top-line classification metrics with the no-skill floor (`base_logloss`) beside log loss, the Strategy-vs-Buy&Hold comparison table, the per-year classification breakdown, the per-year strategy-vs-benchmark returns with excess column, and the equity-curve chart. Wins are green/red-highlighted against the benchmark.
+
 ## What's in the box right now
 
 - Config-driven pipeline (YAML in, HTML report out)
@@ -150,7 +187,21 @@ Single near-term goal: **prove the model has an edge over buy-and-hold** before 
 
 ## Project layout
 
-See `CLAUDE.md` → Folder map.
+```
+configs/                  experiment configs (YAML, one per run)
+data/raw/                 cached OHLCV pulled from yfinance (regeneratable)
+src/lidr_ml/              the package — pipeline, signals, models, backtest, eval, CLI
+tests/                    pytest suite — lookahead-safety, signal accuracy,
+                          strategy-return invariants, pipeline smoke test
+.github/workflows/        CI (test + lint on every push)
+reports/                  generated HTML reports (gitignored except .gitkeep)
+artifacts/
+  predictions/            JSON predictions consumed by lidr
+  models/                 (planned) final trained model — not yet written
+  results_log.csv         cross-run results log (one row per backtest, git-tracked)
+```
+
+The full per-module breakdown lives in [`CLAUDE.md`](CLAUDE.md) → Folder map.
 
 ## Requirements
 

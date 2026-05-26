@@ -35,22 +35,7 @@ Planned but not yet added: **LightGBM** (second base learner — Next Up #4), **
 
 ## Commands
 
-```bash
-# One-time setup
-make install                              # pip install -e .[dev]
-
-# Run a backtest end-to-end (loads config, fits model, generates report)
-make backtest CONFIG=configs/baseline.yaml
-
-# Quick offline run using synthetic data (no internet needed)
-make backtest CONFIG=configs/dev_synthetic.yaml
-
-# Tests + lint
-make test
-make lint
-```
-
-The CLI is `python -m lidr_ml backtest <config>` if you prefer it directly. After `make install`, the console script `lidr-ml backtest <config>` is also available (defined in `pyproject.toml` → `[project.scripts]`); both call `lidr_ml.cli:app`.
+See [README.md → Quick start](README.md#quick-start) and [README.md → CLI](README.md#cli) for the canonical command reference. Targets: `make install`, `make backtest CONFIG=...`, `make test`, `make lint`, `make clean`, `make clean-reports`. Override the Python interpreter with `PYTHON=` if `python3` isn't right for your environment.
 
 ## How the pipeline works
 
@@ -179,6 +164,16 @@ Signal accuracy test harness shipped (2026-05-22, see Recent Changes). Next: por
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-26 — Restructure: README is the public face, CLAUDE.md is Claude-facing (Batch 6 of 6)
+
+Final batch in the drift-fix series. Public-facing material now lives in README; CLAUDE.md is leaner and Claude-focused.
+
+- **README** gained an **Architecture** section with an ASCII pipeline diagram (configs → pipeline orchestrator → data/signals/models/backtest → eval → three output artifacts), a one-paragraph **Stack** description, a sentence describing what the HTML report contains, and a real **Project layout** block (no longer just "see CLAUDE.md").
+- **CLAUDE.md** "Commands" section trimmed to a one-liner pointer at README's Quick Start + CLI sections — the canonical home for "how to run it" is now README. Everything else (Project Goal, Stack, How the pipeline works, Folder map, Conventions, Key Decisions, Gotchas, Next Up, Active Task) stays as the deep-dive reference Claude needs while working on the code.
+- **Screenshot deferred.** A PNG of a rendered report would round out the README but requires actually rendering and capturing one — out of band for this session. The architecture diagram + one-paragraph description of report contents covers most of the orientation need until a screenshot is added (one-line PR when convenient).
+
+That closes a 6-batch arc driven by a drift report (read README, CLAUDE.md, and the codebase; produce findings in three buckets — documented-but-false / true-but-undocumented / ambiguous; then implement). Net effect across the six commits: every claim in CLAUDE.md now matches code; every public-facing contract (CLI, YAML schema, JSON artifact, results_log columns, license, contributing rules) is documented in README/CONTRIBUTING; the SPY baseline number traces to a real CSV row; and README is self-sufficient as the entry point.
 
 ### 2026-05-26 — Drift-fix pass (Batch 1 of 6)
 
