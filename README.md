@@ -224,4 +224,3 @@ In plain English:
 - ❌ **Commercial use requires a separate license** from the copyright holder. This includes running this code as a hosted service, embedding it in a product you sell, or otherwise using it as part of revenue-generating activity.
 
 If you want to use lidr-ml commercially, open a GitHub issue or contact the author directly to discuss licensing.
-
