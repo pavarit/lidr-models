@@ -7,6 +7,7 @@ __pycache__/
 build/
 dist/
 .pytest_cache/
+pytest-cache-files-*/
 .ruff_cache/
 .mypy_cache/
 
@@ -24,8 +25,6 @@ env/
 # Data caches (regeneratable)
 data/raw/*
 !data/raw/.gitkeep
-data/processed/*
-!data/processed/.gitkeep
 
 # Generated outputs
 reports/*

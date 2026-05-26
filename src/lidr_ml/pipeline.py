@@ -48,10 +48,10 @@ def run_pipeline(config_path: Path) -> PipelineResult:
     cache_dir = PROJECT_ROOT / "data" / "raw"
     prices_by_ticker = load_prices(data_cfg, cache_dir=cache_dir)
 
-    # Stub: single-ticker pipeline. Multi-ticker comes when we add cross-sectional features.
+    # Single-ticker pipeline. Multi-ticker support is gated on cross-sectional features.
     if len(prices_by_ticker) != 1:
         raise NotImplementedError(
-            "Stub pipeline supports one ticker at a time. Multi-ticker comes later."
+            "Pipeline supports one ticker at a time. Multi-ticker comes later."
         )
     ticker, prices = next(iter(prices_by_ticker.items()))
     print(f"  Loaded {len(prices)} rows for {ticker} ({prices.index.min().date()} → {prices.index.max().date()})")

@@ -100,9 +100,9 @@ def add_strategy_returns(
 ) -> pd.DataFrame:
     """Append columns for the strategy's equity curve.
 
-    Simple long-only rule for the stub: hold the asset on day t if y_pred == 1,
-    earn the next-day return otherwise be in cash. Transaction costs charged
-    on every position change.
+    Long-only rule: hold the asset on day t if y_pred == 1, otherwise be in
+    cash. Earns the next-day return when in position. Transaction costs are
+    charged on every position change.
     """
     df = predictions.copy()
     df["fwd_return"] = forward_returns.reindex(df.index)

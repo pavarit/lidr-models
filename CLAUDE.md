@@ -31,7 +31,7 @@ Integration is via a JSON file (`artifacts/predictions/<config>-<timestamp>.json
 - **pytest** — tests
 - **ruff** — lint + format
 
-Planned but not yet added: **LightGBM** (second base learner), **MLflow** (experiment tracking), **vectorbt** (faster backtest sweeps once we outgrow the custom engine).
+Planned but not yet added: **LightGBM** (second base learner — Next Up #4), **MLflow** (experiment tracking — deferred to Next Up #10 behind the CSV results log), **vectorbt** (faster backtest sweeps — not yet on the roadmap; revisit if the custom engine becomes the bottleneck).
 
 ## Commands
 
@@ -50,7 +50,7 @@ make test
 make lint
 ```
 
-The CLI is `python -m lidr_ml backtest <config>` if you prefer it directly.
+The CLI is `python -m lidr_ml backtest <config>` if you prefer it directly. After `make install`, the console script `lidr-ml backtest <config>` is also available (defined in `pyproject.toml` → `[project.scripts]`); both call `lidr_ml.cli:app`.
 
 ## How the pipeline works
 
@@ -63,6 +63,7 @@ Reading top-down:
 5. **Backtest engine** (`src/lidr_ml/backtest/engine.py`) — expanding-window walk-forward. For each split: fit model on train slice, predict on test slice, store predictions. Never trains on data after the test period.
 6. **Model** (`src/lidr_ml/models/`) — pluggable. Today: logistic regression. Next: LightGBM, then a stacking meta-learner over both.
 7. **Eval + report** (`src/lidr_ml/eval/`) — metrics (accuracy, log loss, hit rate by year), equity curve assuming "go long when prediction = 1", HTML report written to `reports/<config>-<timestamp>/`. The report shows a **Strategy vs Buy & Hold** comparison table (CAGR, Sharpe, max drawdown, final equity for both legs) and a **per-year performance** table (strategy vs buy-hold return + excess) so regime-dependence is visible. A **Summary** section at the top translates the config into English and states the out-of-sample span (derived from the predictions, not the raw data range). Both the top classification metrics and the per-year table show **base_logloss** (the no-skill floor = entropy of the base rate) beside log loss, and the comparison/per-year tables green/red-highlight whichever side wins. The equity curve is marked to market with **1-day-forward returns**, not the N-day classification target — see Key Decisions.
+8. **Cross-run results log** (`src/lidr_ml/eval/results_log.py`) — `append_run()` appends one row per backtest to `artifacts/results_log.csv` (skill score, full-OOS + per-period log loss with base-rate floors, strategy vs benchmark CAGR/Sharpe/max-drawdown, excess) so "did this change help?" is answerable without opening every HTML report.
 
 Everything is wired together by `src/lidr_ml/pipeline.py::run_pipeline(config_path)`.
 
@@ -74,7 +75,6 @@ configs/                  experiment configs (YAML, one per run)
   dev_synthetic.yaml      same as baseline but synthetic data — offline-safe smoke test
 data/
   raw/                    cached OHLCV pulled from yfinance
-  processed/              feature DataFrames per config (cache)
 src/lidr_ml/
   __init__.py
   __main__.py             entry for `python -m lidr_ml`
@@ -90,17 +90,24 @@ src/lidr_ml/
     base.py               Model protocol
     logistic.py           sklearn logistic regression wrapper
   backtest/
-    engine.py             expanding-window walk-forward backtester
+    engine.py             expanding-window walk-forward backtester + strategy returns
   eval/
-    metrics.py            accuracy, log loss, hit rate, equity curve
+    metrics.py            accuracy, log loss, hit rate, equity curve, per-year breakdown
     report.py             HTML report generator (base64-embedded chart)
+    results_log.py        appends one row per run to artifacts/results_log.csv
 reports/                  generated HTML reports (gitignored except .gitkeep)
 artifacts/
   models/                 (planned) final trained model — NOT yet written; backtest models are throwaway
   predictions/            JSON predictions consumed by lidr
+  results_log.csv         cross-run results log (one row per backtest, tracked in git)
 tests/
+  conftest.py             shared `synthetic_prices` fixture
   test_no_lookahead.py    asserts every registered signal is lookahead-safe
+  test_signal_accuracy.py element-wise signal correctness + spot checks on arithmetic series
+  test_strategy_returns.py guards the equity-curve return rule (1-day-forward, costs charged)
   test_pipeline_smoke.py  runs dev_synthetic config end-to-end
+.github/workflows/
+  test.yml                CI: `make test` + `make lint` on every push / PR
 ```
 
 ## Key Decisions
@@ -147,6 +154,10 @@ Signal accuracy test harness shipped (2026-05-22, see Recent Changes). Next: por
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-26 — Documentation & tech-debt cleanup pass
+
+Hygiene pass with no behavior changes. (1) **README.md refreshed**: "What's in the box" now lists the benchmark-vs-buy-hold report, the `artifacts/results_log.csv` cross-run log, and the signal accuracy + CI harness — i.e. the work that landed 2026-05-20 through 2026-05-22. "What's next" rewritten around the **edge gate** framing (prove the model beats buy-and-hold before any serving/integration), with the gated items (final-model fit/serialize, artifact schema, lidr wiring, MLflow) called out explicitly. Added the **SPY baseline status** line so the README states the current bar without needing to open CLAUDE.md. Also documented the `lidr-ml` console-script entry point as an alternative to `python -m lidr_ml`. (2) **CLAUDE.md drift fixes**: Stack footnote for "Planned but not yet added" now cross-references roadmap numbers (LightGBM = #4, MLflow = #10/deferred, vectorbt = off-roadmap until the engine becomes a bottleneck); the "How the pipeline works" list grew a step 8 for the cross-run results log; the **Folder map** was reconciled with reality — added `eval/results_log.py`, `artifacts/results_log.csv`, `tests/conftest.py`, `tests/test_signal_accuracy.py`, `tests/test_strategy_returns.py`, and `.github/workflows/test.yml`; removed the never-used `data/processed/` cache layer (no code reads or writes it). (3) **De-stub code language**: `pipeline.py` (single-ticker comment + NotImplementedError message) and `backtest/engine.py::add_strategy_returns` docstring no longer call themselves "stubs" — these have been the real implementation since the 2026-05-20 equity-curve fix. (4) **Repo hygiene**: deleted `data/processed/` and its `.gitignore` rule; deleted the stray `pytest-cache-files-o4434ewm/` directory at the repo root (one-off pytest cache from somewhere); added `pytest-cache-files-*/` to `.gitignore`; extended `make clean` to sweep that pattern; added a new `make clean-reports` target so accumulated timestamped `reports/<config>-<ts>/` dirs can be swept without nuking the parent. No source-of-truth or test changes; tests + lint still green.
 
 ### 2026-05-22 — Signal accuracy test harness + CI (Next Up #2)
 

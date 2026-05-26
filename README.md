@@ -19,18 +19,25 @@ make backtest CONFIG=configs/baseline.yaml
 
 Each run drops a self-contained HTML report into `reports/<config-name>-<timestamp>/report.html`. Open it in a browser.
 
+After `make install`, you can also invoke the CLI directly as `python -m lidr_ml backtest <config>` or via the installed console script `lidr-ml backtest <config>`.
+
 ## What's in the box right now
 
 - Config-driven pipeline (YAML in, HTML report out)
-- Expanding-window walk-forward backtest (no lookahead)
+- Expanding-window walk-forward backtest (no lookahead, regression-tested)
 - One ported signal: SMA crossover (parity with lidr's `lib/signals/sma.ts`)
 - One base model: logistic regression
 - yfinance loader with a synthetic-data fallback for offline development
 - Transaction costs (5 bps default) baked into the equity curve
+- Report benchmarks the strategy against buy-and-hold (CAGR, Sharpe, max drawdown, per-year excess) with base-rate floors on log loss
+- Cross-run results log at `artifacts/results_log.csv` — one row appended per backtest
+- Signal accuracy + no-lookahead test harness; CI runs `make test` + `make lint` on every push
+
+**SPY baseline status:** the single-signal logistic model **does not** beat buy-and-hold (CAGR ~8.0% vs ~14.5%, log loss at the no-skill floor). That's the bar every future model must clear.
 
 ## What's next
 
-See `CLAUDE.md` → Next Up. Short version: port the other five lidr signals, add LightGBM, add MLflow, add stacking + regime features, write the artifact JSON that lidr will read.
+Single near-term goal: **prove the model has an edge over buy-and-hold** before building any serving/integration plumbing. See `CLAUDE.md` → Next Up for the full priority list. Short version: port the remaining five lidr signals (RSI, MACD, Bollinger, breakout, volume) → add LightGBM as a second base learner → stacking → regime features. Final-model fit/serialize, artifact schema, lidr wiring, and MLflow are all explicitly **gated** on something actually beating buy-and-hold first.
 
 ## Project layout
 
