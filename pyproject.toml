@@ -9,7 +9,7 @@ description = "ML pipeline for backtested BUY/HOLD/SELL recommendations from lid
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Boon Boonyasirichok" }]
-license = { text = "MIT" }
+license = { text = "PolyForm-Noncommercial-1.0.0" }
 dependencies = [
     "pandas>=2.0",
     "numpy>=1.24",

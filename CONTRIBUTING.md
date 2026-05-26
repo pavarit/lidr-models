@@ -86,6 +86,10 @@ python -m pytest tests/test_signal_accuracy.py::test_signal_matches_reference -k
 - Each commit should be self-contained and pass tests + lint.
 - For meaningful changes, append a dated entry to `CLAUDE.md` → **Recent Changes** (one paragraph, what + why). The Maintenance Instructions at the bottom of CLAUDE.md spell out the rules.
 
+## License of contributions
+
+By opening a pull request, you agree that your contribution is licensed under the same [PolyForm Noncommercial 1.0.0](LICENSE) terms as the rest of the project. If you need different terms for a specific contribution, raise it in the PR description so we can discuss before merging.
+
 ## Where to start
 
 If you're new to the codebase, read in this order:
