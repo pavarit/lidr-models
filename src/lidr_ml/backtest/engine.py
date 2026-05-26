@@ -103,6 +103,12 @@ def add_strategy_returns(
     Long-only rule: hold the asset on day t if y_pred == 1, otherwise be in
     cash. Earns the next-day return when in position. Transaction costs are
     charged on every position change.
+
+    Adds four columns to the returned DataFrame (input is not mutated):
+      - ``fwd_return``       1-day forward market return aligned to df.index
+      - ``strategy_return``  position * fwd_return - per-trade cost
+      - ``strategy_equity``  cumulative product of (1 + strategy_return)
+      - ``buy_hold_equity``  cumulative product of (1 + fwd_return)
     """
     df = predictions.copy()
     df["fwd_return"] = forward_returns.reindex(df.index)
