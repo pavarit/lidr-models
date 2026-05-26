@@ -62,6 +62,8 @@ One pipeline, top-to-bottom. Everything is invoked from [`src/lidr_ml/pipeline.p
 
 The HTML report contains: a config summary, top-line classification metrics with the no-skill floor (`base_logloss`) beside log loss, the Strategy-vs-Buy&Hold comparison table, the per-year classification breakdown, the per-year strategy-vs-benchmark returns with excess column, and the equity-curve chart. Wins are green/red-highlighted against the benchmark.
 
+**Example report**: [view rendered](https://htmlpreview.github.io/?https://github.com/pavarit/lidr-ml/blob/main/docs/sample-report/report.html) (via `htmlpreview.github.io`) or [view raw HTML](docs/sample-report/report.html). Same baseline run cited in the SPY baseline status below (`baseline_v1-20260526-124439`).
+
 ## What's in the box right now
 
 - Config-driven pipeline (YAML in, HTML report out)
