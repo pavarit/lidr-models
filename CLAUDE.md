@@ -99,6 +99,7 @@ tests/
 
 ## Conventions (read before writing code)
 
+- **`main` is protected — all changes land via PR.** Direct pushes are blocked. Workflow: branch → commit → push → `gh pr create` → wait for green CI → `gh pr merge --squash --delete-branch`. Full procedure in [CONTRIBUTING.md → Workflow](CONTRIBUTING.md#workflow). Unlike the sibling lidr project there is no Vercel preview here — CI passing is the only required gate, because lidr-ml doesn't auto-deploy anywhere.
 - **Python ≥3.10**, src-layout package; ruff for lint + format (`line-length = 100`, `target-version = "py310"`). Snake_case modules and functions.
 - **Signals are pure functions**: `(prices: DataFrame, params: dict) → Series` aligned to the input index. Conform to `signals/base.py::SignalFn`. Must be lookahead-safe — `f(prices[:t])[t] == f(prices)[t]`.
 - **Models conform to `models/base.py::Model`**: three methods — `fit(X, y) -> None`, `predict_proba(X) -> np.ndarray` (shape `(n_samples, n_classes)`), and `predict(X) -> np.ndarray`.
@@ -190,6 +191,19 @@ Drift audit against the code surfaced several stale facts in CLAUDE.md and one d
 - **README**: "synthetic-data fallback" → "synthetic-data alternative" — `source: synthetic` is an explicit config switch, not an automatic fallback when yfinance fails.
 
 This is the first of six batches mapped out from a full drift report. Remaining: LICENSE + CONTRIBUTING + badges; README YAML/JSON schema reference; smaller operational notes (yfinance auto-adjust, cache invalidation); re-run SPY baseline so README numbers trace to `results_log.csv`; README ↔ CLAUDE.md restructure with architecture diagram + report screenshot.
+
+### 2026-05-26 — Adopt protected-main PR workflow
+
+Following the same workflow change applied to the sibling `lidr` project today: `main` is now protected by GitHub branch protection rules, all changes land via PR, required green CI (`make test` + `make lint`) before merge. No code-review requirement (sole developer); the gate is just "CI green."
+
+Unlike `lidr`, lidr-ml has no Vercel deploy step — the pipeline produces a JSON artifact that's consumed manually. So CI passing is the only required gate; there is no preview-deploy step.
+
+Doc-only changes in this commit:
+
+- `CONTRIBUTING.md`: new top-level **Workflow** section with the full branch → PR → CI → merge → cleanup sequence, including the admin-override-for-emergencies note.
+- `CLAUDE.md` Conventions: new bullet at the top of the section flagging that `main` is protected and pointing at CONTRIBUTING.md for the procedure.
+
+Branch protection settings themselves live in GitHub repo settings, not in git — applied separately in the GitHub UI alongside the same setup on `lidr`.
 
 ### 2026-05-26 — Relicense MIT → PolyForm Noncommercial 1.0.0
 

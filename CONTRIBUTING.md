@@ -79,11 +79,46 @@ To run a single test:
 python -m pytest tests/test_signal_accuracy.py::test_signal_matches_reference -k sma_crossover
 ```
 
+## Workflow
+
+`main` is protected — direct pushes are blocked, and every change has to go through a pull request with green CI. The flow:
+
+```bash
+# 1. Branch off the latest main
+git checkout main && git pull
+git checkout -b some-descriptive-name
+
+# 2. Make your changes, commit locally
+git add ...
+git commit -m "..."
+
+# 3. Push the branch
+git push -u origin some-descriptive-name
+
+# 4. Open a PR
+gh pr create --fill   # uses your last commit message as the PR title/body
+```
+
+After the PR is open, **GitHub Actions CI** runs `make test + make lint` (see [`.github/workflows/test.yml`](.github/workflows/test.yml)). The status appears as a check on the PR. Must be green to merge.
+
+When CI passes:
+
+```bash
+# 5. Merge with squash (one commit per PR on main)
+gh pr merge --squash --delete-branch
+
+# 6. Sync your local main
+git checkout main && git pull
+```
+
+> Unlike the sibling `lidr` project, lidr-ml does not auto-deploy anywhere — there is no Vercel preview to check. CI passing is the only required gate. The artifact `lidr-ml` produces (the JSON predictions file) is consumed manually, so there is no continuous deployment to worry about.
+
+> Emergencies: as the repo admin, you can override branch protection and push directly. Don't make a habit of it.
+
 ## Commit + PR conventions
 
-- Branch off `main`. PRs target `main`.
-- Commit messages: short imperative title, then a blank line, then prose. Wrap at ~72 chars.
-- Each commit should be self-contained and pass tests + lint.
+- Commit messages: short imperative title, blank line, then prose. Wrap at ~72 chars.
+- Each commit should be self-contained and pass tests + lint locally before pushing (`make test && make lint`).
 - For meaningful changes, append a dated entry to `CLAUDE.md` → **Recent Changes** (one paragraph, what + why). The Maintenance Instructions at the bottom of CLAUDE.md spell out the rules.
 
 ## License of contributions
