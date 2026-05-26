@@ -24,6 +24,7 @@ from lidr_ml.eval.metrics import (
     strategy_metrics,
 )
 from lidr_ml.eval.report import write_report
+from lidr_ml.eval.results_log import append_run
 from lidr_ml.models import build_model
 from lidr_ml.signals import get_signal
 
@@ -78,7 +79,6 @@ def run_pipeline(config_path: Path) -> PipelineResult:
     aligned = pd.concat([X, y.rename("__y__"), fwd_return.rename("__fwd__")], axis=1).dropna()
     X_clean = aligned[X.columns]
     y_clean = aligned["__y__"].astype(int)
-    fwd_clean = aligned["__fwd__"]
     print(f"  After alignment + dropna: {len(X_clean)} usable rows, base rate {y_clean.mean():.3f}")
 
     # 4. Backtest ------------------------------------------------------------
@@ -124,6 +124,33 @@ def run_pipeline(config_path: Path) -> PipelineResult:
     perf_yr = performance_by_year(preds_with_ret)
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    # Log this run to the cross-run results CSV so "did this change help?" is
+    # answerable without opening individual HTML reports.
+    log_path = PROJECT_ROOT / "artifacts" / "results_log.csv"
+    try:
+        out_dir_for_log = PROJECT_ROOT / "reports" / f"{name}-{stamp}"
+        append_run(
+            log_path=log_path,
+            run_id=stamp,
+            config_name=name,
+            ticker=ticker,
+            predictions=result.predictions,
+            cls_m=cls_m,
+            strat_m=strat_m,
+            bench_m=bench_m,
+            by_year_df=yr,
+            report_path=out_dir_for_log / "report.html",
+            project_root=PROJECT_ROOT,
+        )
+        skill = cls_m.get("base_logloss", 0) or 0
+        skill_str = f"{1.0 - cls_m['log_loss'] / skill:.4f}" if skill > 0 else "n/a"
+        excess = (strat_m.get("cagr") or 0.0) - (bench_m.get("cagr") or 0.0)
+        print(f"  Results log → {log_path.relative_to(PROJECT_ROOT)}  "
+              f"(skill_score={skill_str}, excess_cagr={excess:+.4f})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  WARNING: could not write results log: {exc}")
+
     out_dir = PROJECT_ROOT / "reports" / f"{name}-{stamp}"
     report_path = write_report(
         out_dir=out_dir,

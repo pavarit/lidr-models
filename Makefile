@@ -10,7 +10,7 @@ backtest:
 	python -m lidr_ml backtest $(CONFIG)
 
 test:
-	pytest
+	python3 -m pytest
 
 lint:
 	ruff check src tests

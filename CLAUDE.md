@@ -109,7 +109,7 @@ Things future-Claude would benefit from knowing before touching related code.
 
 - **One Python project, separate from lidr.** Tried as a folder inside lidr first (mentally); rejected because Python venvs + Node modules in one tree gets messy fast and the two pieces deploy on different cadences (Vercel vs. eventually Railway/Render). The deliberate seam is the JSON artifact.
 - **Source of truth for signal logic stays in lidr until cutover.** Each Python signal in `src/lidr_ml/signals/` is a *port* of the corresponding TS signal in lidr's `lib/signals/`. We assert numerical parity in tests so the two implementations don't drift. When the calibrated model finally goes live in production, *then* we'll decide whether the TS versions get deleted, kept as a fallback, or only used for display while predictions come from the artifact.
-- **Lookahead bias is the #1 thing to guard against.** Every signal goes through `tests/test_no_lookahead.py`, which compares "value at time t computed from full series" vs. "value at time t computed from series truncated at t" and asserts they match. Easy to forget; catastrophic if missed. Do not add a signal without adding it to this test's registry.
+- **Lookahead bias is the #1 thing to guard against.** Every signal goes through `tests/test_no_lookahead.py`, which compares "value at time t computed from full series" vs. "value at time t computed from series truncated at t" and asserts they match. Easy to forget; catastrophic if missed. Do not add a signal without adding it to this test's registry. See also `tests/test_signal_accuracy.py` for the complementary accuracy tests (correct formula, correct NaN warmup, spot-checked against hand-derived values).
 - **Backtests use expanding-window walk-forward, never random k-fold.** Time-series data leaks information across random splits. `sklearn.model_selection.TimeSeriesSplit` does the slicing.
 - **Synthetic data fallback exists for a reason.** The dev_synthetic config lets the pipeline run with no network, which makes CI, tests, and Cowork-sandbox verification trivial. Keep it functional. Do not delete it.
 - **Confidence values in lidr today are heuristics, not probabilities.** The whole point of this project is to fix that. Anything we ship back to lidr from here should be a calibrated probability (sklearn's `predict_proba`, or LightGBM's, calibrated via Platt scaling or isotonic regression if needed). Note: the baseline uses `class_weight=balanced`, which deliberately distorts output probabilities away from true frequencies (fine for the up/down decision, bad for calibration). When probabilities start going to the site, likely switch to `class_weight=None` plus an explicit calibration step.
@@ -123,9 +123,9 @@ Things future-Claude would benefit from knowing before touching related code.
 
 Priority order, reset on 2026-05-21 around a single near-term goal: **prove the model has an edge over buy-and-hold** before building any serving/integration plumbing. The SPY baseline currently shows no edge (see Active Task), so the path below is instrument → add features → improve the model. Everything past #6 is explicitly gated on an edge actually appearing.
 
-1. **Add a lightweight cross-run results log.** Append one row per run (config name, skill score = 1 − log_loss/base_logloss, CAGR & Sharpe vs buy-and-hold, max drawdown) to a CSV, so "did this change help?" is answerable without opening each HTML. *Moved to #1 because it's the cheapest item on the list and it makes every experiment below measurable — do it before the experiments, not after.* Interim before MLflow (#10).
-2. **Build the TS→Python signal parity-test harness.** A shared fixed price series, a one-off TS script in lidr that dumps each signal's expected outputs to a JSON fixture, and a Python test asserting the ported signal matches. Prerequisite to porting more signals safely — prove the round-trip on the already-ported `sma_crossover` first.
-3. **Port the remaining five lidr signals to Python**: `rsi`, `macd`, `bollinger`, `breakout`, `volume`. Each registered, added to `tests/test_no_lookahead.py`, and parity-tested via the harness from #2. *Biggest single lever on edge — takes the model from one feature to six. Re-run the logistic baseline on all six as a cheap checkpoint: if six features still can't beat the benchmark, the bottleneck is the model, not the features.*
+1. ~~**Add a lightweight cross-run results log.**~~ ✅ Done 2026-05-22. `artifacts/results_log.csv` — appended after every run; columns include skill score, full-OOS log loss, per-period log loss for 2025 and Q1 2026 (with base_logloss floors), strategy vs benchmark CAGR/Sharpe/drawdown, and excess. See `src/lidr_ml/eval/results_log.py`.
+2. ~~**Build the signal accuracy test harness.**~~ ✅ Done 2026-05-22. `tests/test_signal_accuracy.py` — two-layer validation: (1) element-wise comparison against an inline reference formula for each signal; (2) spot checks against hand-derived values on an arithmetic price series. No cross-repo coordination needed. GitHub Actions CI added (`.github/workflows/test.yml`). `tests/conftest.py` introduced to share the `synthetic_prices` fixture. Pre-existing lint errors in `src/` cleaned up; `Makefile` updated to use `python3 -m pytest` for correct interpreter resolution.
+3. **Port the remaining five lidr signals to Python**: `rsi`, `macd`, `bollinger`, `breakout`, `volume`. Each registered, added to `tests/test_no_lookahead.py`, and given an `ACCURACY_CASES` entry in `tests/test_signal_accuracy.py` (inline reference formula + ≥2 spot checks; use `pandas-ta` as reference for RSI/MACD where the smoothing algorithm is non-trivial). *Biggest single lever on edge — takes the model from one feature to six. Re-run the logistic baseline on all six as a cheap checkpoint: if six features still can't beat the benchmark, the bottleneck is the model, not the features.*
 4. **Add LightGBM as a second base learner.** Drop-in: implement `models/lightgbm.py` against the same `Model` protocol, add a config that uses it. *A nonlinear learner over six signals is the most likely place an edge first appears.*
 5. **Introduce stacking.** Once two base learners exist, add a `StackedModel` whose `fit` trains the base learners via out-of-fold predictions and then trains a meta-learner (logistic regression) on top.
 6. **Add regime features.** VIX level, yield-curve slope, 60-day realized vol. Fed into the meta-learner so it can lean on different base models in different environments.
@@ -141,12 +141,28 @@ Priority order, reset on 2026-05-21 around a single near-term goal: **prove the 
 
 _Nothing currently in-flight._
 
-Iteration-readiness pass complete (2026-05-20 → 2026-05-21, see Recent Changes): equity-curve bug fixed; the report now answers "does the model beat buy-and-hold?" via a config Summary, Strategy-vs-Buy&Hold and per-year tables, base_logloss no-skill floors, and green/red highlighting; regression tests in place. The SPY baseline was run and reviewed end to end — the single-signal logistic model **underperforms buy-and-hold on every metric** (CAGR ~8.0% vs ~14.5%, Sharpe 0.67 vs 0.89, ~equal drawdown) and its log loss sits at the no-skill floor: no edge, exactly as expected for a one-feature baseline. That establishes the bar every real model must beat. Next (per the 2026-05-21 roadmap reprioritization): stand up the cross-run results log (Next Up #1), then the TS→Python parity-test harness (#2), then port the five remaining signals starting with RSI (#3).
+Signal accuracy test harness shipped (2026-05-22, see Recent Changes). Next: port the five remaining signals starting with RSI (Next Up #3).
 
 <!-- Update this section when work is in progress. Replace with `_Nothing currently in-flight._`
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-22 — Signal accuracy test harness + CI (Next Up #2)
+
+New file `tests/test_signal_accuracy.py` — two-layer accuracy validation for every registered signal. Layer 1: element-wise comparison against a simple inline reference formula (catches wrong `min_periods`, wrong normalization, wrong formula). Layer 2: spot checks against hand-derived values on an arithmetic price series (`close = [100, 101, ...]`), where SMAs reduce to sums of consecutive integers and can be verified without running code. `ACCURACY_CASES` table is the extension point: add one entry per signal when porting.
+
+New file `tests/conftest.py` — shared `synthetic_prices` fixture (600-day log-normal series, seed=0) extracted from `test_no_lookahead.py` so both test modules use the same data without duplication.
+
+New file `.github/workflows/test.yml` — CI runs `make test` + `make lint` on every push and pull request (Python 3.11, `ubuntu-latest`).
+
+`Makefile` updated: `make test` now calls `python3 -m pytest` instead of bare `pytest` to ensure the correct interpreter (and therefore the installed packages) is used.
+
+Pre-existing lint errors in `src/` cleaned up: unused imports in `engine.py`, `registry.py`; unsorted import blocks in `results_log.py`, `signals/__init__.py`; unused variable in `pipeline.py`; `typer.Argument` call moved to `Annotated` type in `cli.py`. All tests pass; lint is now clean.
+
+### 2026-05-22 — Cross-run results log (Next Up #1)
+
+New file `src/lidr_ml/eval/results_log.py` — `append_run()` appends one row to `artifacts/results_log.csv` after every backtest run. Columns: `run_id`, `config_name`, `ticker`, `oos_start/end`, `n_oos`, `skill_score` (= 1 − log_loss/base_logloss), full-OOS `base_logloss` + `log_loss` + `accuracy`, period breakdowns `base_logloss_2025` / `log_loss_2025` / `base_logloss_2026q1` / `log_loss_2026q1`, strategy and benchmark CAGR/Sharpe/max_dd/final_equity, `excess_cagr`, `excess_sharpe`, `report_path`. The file lives at the `artifacts/` root (not gitignored) and accumulates experiment history across sessions. Pipeline prints a one-liner summary after each append. `pipeline.py` updated to import and call `append_run` (non-fatal; wrapped in try/except). All existing tests pass.
 
 ### 2026-05-21 — Roadmap reprioritization around proving the edge
 
