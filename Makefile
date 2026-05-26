@@ -3,21 +3,24 @@
 # Default config if none specified
 CONFIG ?= configs/dev_synthetic.yaml
 
+# Override on the command line if needed: make backtest PYTHON=python
+PYTHON ?= python3
+
 install:
-	pip install -e ".[dev]"
+	$(PYTHON) -m pip install -e ".[dev]"
 
 backtest:
-	python -m lidr_ml backtest $(CONFIG)
+	$(PYTHON) -m lidr_ml backtest $(CONFIG)
 
 test:
-	python3 -m pytest
+	$(PYTHON) -m pytest
 
 lint:
-	ruff check src tests
+	$(PYTHON) -m ruff check src tests
 
 format:
-	ruff format src tests
-	ruff check --fix src tests
+	$(PYTHON) -m ruff format src tests
+	$(PYTHON) -m ruff check --fix src tests
 
 clean:
 	rm -rf build dist *.egg-info
