@@ -111,6 +111,7 @@ tests/
 - **Every report must show a benchmark.** Strategy metrics rendered beside buy-and-hold; log loss rendered beside `base_logloss` (the no-skill floor). New comparison columns get appended to the *right* of existing benchmark columns.
 - **Errors at config boundaries are `NotImplementedError`** with a message naming the unsupported value (see `pipeline.py` for the pattern). Internal invariants use `assert` or raise `ValueError`. No silent fallbacks.
 - **CI runs `make test` + `make lint` on every push** (`.github/workflows/test.yml`). Don't merge red.
+- **Refresh the committed sample report when report formatting changes.** If a PR touches `src/lidr_ml/eval/report.py`, `src/lidr_ml/eval/metrics.py`, or `configs/baseline.yaml`, run `make refresh-sample-report` and include the updated `docs/sample-report/report.html` (and the new `artifacts/results_log.csv` row that the run appends) in the same commit. Keeps the README's "Example report" link in sync with the headline SPY baseline numbers. Requires internet (yfinance).
 
 See **Gotchas** below for the past failures that motivated several of these rules.
 

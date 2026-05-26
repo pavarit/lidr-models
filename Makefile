@@ -1,4 +1,4 @@
-.PHONY: install backtest test lint format clean clean-reports
+.PHONY: install backtest test lint format clean clean-reports refresh-sample-report
 
 # Default config if none specified
 CONFIG ?= configs/dev_synthetic.yaml
@@ -29,3 +29,12 @@ clean:
 
 clean-reports:
 	find reports -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+
+# Re-runs the SPY baseline and copies the freshest report HTML into
+# docs/sample-report/ so README's "Example report" link stays in sync
+# with the cited headline numbers. Requires internet (yfinance).
+refresh-sample-report:
+	$(PYTHON) -m lidr_ml backtest configs/baseline.yaml
+	@latest=$$(ls -1td reports/baseline_v1-*/ | head -n 1) && \
+		cp $$latest/report.html docs/sample-report/report.html && \
+		echo "Refreshed docs/sample-report/report.html from $$latest"

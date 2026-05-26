@@ -44,6 +44,16 @@ There's no model-accuracy test analog to the signal one — model behavior is ju
 
 Copy `configs/baseline.yaml`, change `name`, adjust `data.tickers` / `data.start_date` / `data.end_date`, swap signals or model as needed. See README → **Config schema** for the field reference.
 
+### Changing report formatting
+
+The README links to a committed sample report at `docs/sample-report/report.html` (rendered via `htmlpreview.github.io`) which is meant to show what a current run actually looks like. If your PR touches **`src/lidr_ml/eval/report.py`**, **`src/lidr_ml/eval/metrics.py`**, or **`configs/baseline.yaml`** — anything that affects what the report displays or what numbers headline it — refresh the sample report in the same commit:
+
+```bash
+make refresh-sample-report   # runs SPY baseline + copies report.html to docs/sample-report/
+```
+
+Include both the updated `docs/sample-report/report.html` *and* the new `artifacts/results_log.csv` row in the commit. Keeps the link and the cited SPY baseline numbers in sync. Requires internet for the yfinance call.
+
 ## Backtest invariants
 
 These are enforced by tests and code review:
