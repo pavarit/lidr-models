@@ -110,6 +110,27 @@ tests/
   test.yml                CI: `make test` + `make lint` on every push / PR
 ```
 
+## Conventions (read before writing code)
+
+- **Python ≥3.10**, src-layout package; ruff for lint + format (`line-length = 100`, `target-version = "py310"`). Snake_case modules and functions.
+- **Signals are pure functions**: `(prices: DataFrame, params: dict) → Series` aligned to the input index. Conform to `signals/base.py::Signal`. Must be lookahead-safe — `f(prices[:t])[t] == f(prices)[t]`.
+- **Models conform to `models/base.py::Model`**: `fit(X, y)` + `predict_proba(X) → DataFrame` keyed by class.
+- **When adding a signal, three things must land in the same PR**:
+  1. Register in `signals/registry.py`.
+  2. Add to the `SIGNALS` table in `tests/test_no_lookahead.py` (the lookahead test is non-negotiable).
+  3. Add an `ACCURACY_CASES` entry in `tests/test_signal_accuracy.py` (inline reference formula + ≥2 spot checks against hand-derived values).
+- **Backtests use expanding-window walk-forward only.** Random k-fold leaks information across time and is rejected on sight.
+- **Transaction costs are modeled in every backtest.** Default 5 bps; configurable but never zero in a config that gets compared to buy-and-hold.
+- **Every report must show a benchmark.** Strategy metrics rendered beside buy-and-hold; log loss rendered beside `base_logloss` (the no-skill floor). New comparison columns get appended to the *right* of existing benchmark columns.
+- **Errors at config boundaries are `NotImplementedError`** with a message naming the unsupported value (see `pipeline.py` for the pattern). Internal invariants use `assert` or raise `ValueError`. No silent fallbacks.
+- **CI runs `make test` + `make lint` on every push** (`.github/workflows/test.yml`). Don't merge red.
+- **Anti-patterns we have hit before** (call these out in review):
+  - Compounding the N-day classification target on every daily row in the equity curve (overlap bug — see Gotchas).
+  - Adding a signal without the lookahead test (catastrophic if missed).
+  - Caching processed features in parquet on Python ≥3.14 (no wheels yet; use pickle for local caches — see `data/loaders.py`).
+  - Removing `list-signals` from the Typer CLI (Typer collapses single-command apps into a flat CLI and breaks `python -m lidr_ml backtest`).
+  - Letting a cloud-review iteration silently drop the tail of CLAUDE.md (Recent Changes + Maintenance Instructions are load-bearing — see Gotchas).
+
 ## Key Decisions
 
 Things future-Claude would benefit from knowing before touching related code.
@@ -125,6 +146,18 @@ Things future-Claude would benefit from knowing before touching related code.
 - **Transaction costs are modeled even in the stub.** Default 5 bps per trade. A strategy that's only profitable with zero costs is not a strategy. Baked into the equity curve from day one.
 - **The equity curve uses 1-day-forward returns, NOT the N-day classification target.** The model predicts an N-day-forward direction (the classification target), but the strategy is marked to market daily: position taken on day *t* earns the return from *t* to *t+1*. Compounding the N-day return on every daily row (the original bug) overlaps the same window ~N times and massively inflates the curve. Keep these two return series separate: `fwd_clean` (N-day) is the target only; `daily_fwd_return` drives the equity. Regression-tested in `tests/test_strategy_returns.py`.
 - **No survivorship-bias-free data yet.** yfinance only has currently-listed tickers. For SPY/QQQ/sector ETFs this is fine. For individual-stock backtests we'd want CRSP — out of scope for the personal-use phase, but worth flagging if/when results on individual names start looking suspiciously good.
+
+## Gotchas
+
+Non-obvious things that bit us. Each entry earned its place by causing a real problem.
+
+- **The equity curve runs on 1-day-forward returns, not the N-day classification target.** Compounding the N-day return on every daily row counts the same window ~N times and inflates final equity by an order of magnitude. See `pipeline.py::run_pipeline` (`daily_fwd_return` is the equity input; `fwd_clean` is the classifier target only) and `tests/test_strategy_returns.py`, which is what makes sure the bug stays fixed.
+- **Cloud-review iterations have silently truncated CLAUDE.md.** Twice now (#1 and #2 PRs from 2026-05-22) a remote-authored CLAUDE.md commit dropped the older Recent Changes entries and the entire Maintenance Instructions section, and replaced "Boon confirmed" with "confirmed". If a remote-authored CLAUDE.md commit looks shorter than the previous tip, diff before merging and restore explicitly.
+- **The Cowork sandbox mount has served stale/truncated copies of freshly-edited files mid-session.** File mtimes did not advance, so cached `__pycache__` bytecode masked edits. If a run reports "old" behavior after an edit, clear `__pycache__`, confirm the mtime advanced, and verify against a sandbox-local copy. The committed source on disk is authoritative.
+- **Python 3.14 has no parquet wheels yet.** `data/loaders.py` caches OHLCV in pickle, not parquet. Don't "fix" the loader by switching back to parquet without verifying `pyarrow`/`fastparquet` wheels exist for the target Python — the comment at `loaders.py:50` documents why.
+- **Typer collapses single-command apps into a flat CLI.** Removing `list-signals` from `cli.py` would silently break `python -m lidr_ml backtest <config>` (Typer would re-flatten the entry point). Don't remove `list-signals` until a third real command lands.
+- **`yfinance` only has currently-listed tickers** — survivorship bias. Fine for SPY/QQQ/sector ETFs; suspicious for individual-name backtests. Don't trust individual-stock results without a CRSP-style source.
+- **`class_weight="balanced"` in the baseline distorts `predict_proba` away from true frequencies.** Fine for the up/down decision the backtest evaluates; not OK to ship to lidr as a calibrated probability. Revisit `class_weight` and add an explicit Platt/isotonic calibration step when wiring the prediction artifact (Next Up #7).
 
 ## Next Up
 
@@ -154,6 +187,10 @@ Signal accuracy test harness shipped (2026-05-22, see Recent Changes). Next: por
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-26 — Add Conventions and Gotchas sections
+
+Adopted the missing two sections from the standard CLAUDE.md template: **Conventions** (slotted before Key Decisions — the rules a contributor needs before writing code: signal/model protocols, the three-things-must-land-together rule for new signals, error-handling pattern, anti-patterns) and **Gotchas** (slotted after Key Decisions — the non-obvious things that have bitten us, each one earned by a real problem: the N-day-vs-1-day equity-curve overlap bug, cloud-review iterations silently truncating CLAUDE.md, the Cowork stale-mount issue, Python 3.14 parquet wheels, Typer single-command flattening, yfinance survivorship bias, `class_weight="balanced"` distorting `predict_proba`). The other template sections (What this is / Architecture / Key files / Commands / Current focus) were already covered by Project Goal / Architecture / Folder map / Commands / Active Task and were not duplicated. Some overlap with Key Decisions is intentional — Key Decisions tells you *why we chose X*, Conventions tells you *the rule that follows*, Gotchas tells you *what happens when someone forgets the rule*.
 
 ### 2026-05-26 — Documentation & tech-debt cleanup pass
 
