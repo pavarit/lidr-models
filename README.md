@@ -1,5 +1,9 @@
 # lidr-ml
 
+[![CI](https://github.com/pavarit/lidr-ml/actions/workflows/test.yml/badge.svg)](https://github.com/pavarit/lidr-ml/actions/workflows/test.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 Python ML pipeline that turns the technical signals from [lidr](https://github.com/pavarit/lidr) into empirically calibrated BUY / HOLD / SELL recommendations via backtested ensemble models.
 
 This is the data-science sibling of the lidr Next.js app. See `CLAUDE.md` for the full architecture, design decisions, and roadmap.
@@ -45,5 +49,13 @@ See `CLAUDE.md` → Folder map.
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.10+ (CI tests on 3.11; Python 3.14 works for everything except parquet-based caches — we use pickle on purpose).
 - Internet access for `configs/baseline.yaml` (yfinance). The `dev_synthetic` config runs offline.
+
+## Contributing
+
+PRs and issues welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, the three-things-must-land rule for adding a signal, the pattern for adding a model, and the backtest invariants enforced by tests + CI.
+
+## License
+
+[MIT](LICENSE) — see the LICENSE file for full text.
