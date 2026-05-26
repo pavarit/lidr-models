@@ -37,7 +37,22 @@ After `make install`, you can also invoke the CLI directly as `python -m lidr_ml
 - Cross-run results log at `artifacts/results_log.csv` — one row appended per backtest
 - Signal accuracy + no-lookahead test harness; CI runs `make test` + `make lint` on every push
 
-**SPY baseline status:** the single-signal logistic model **does not** beat buy-and-hold (CAGR ~8.0% vs ~14.5%, log loss at the no-skill floor). That's the bar every future model must clear.
+**SPY baseline status** (run `20260526-124439`, OOS 2010-10-18 → 2026-04-23, 3,914 predictions across 16 walk-forward splits):
+
+| | Strategy | Buy & Hold |
+| --- | --- | --- |
+| CAGR | **7.96 %** | **14.54 %** |
+| Sharpe | 0.67 | 0.89 |
+| Max drawdown | −33.75 % | −33.72 % |
+| Final equity | 3.28× | 8.23× |
+
+The single-signal logistic model **underperforms buy-and-hold on every dimension**, and the classifier itself is worse than no-skill:
+
+- **Skill score −0.038** — log loss `0.6925` sits *above* the no-skill floor `0.6672` (entropy of the 61.3 % base rate).
+- **Accuracy `0.556` < base rate `0.613`** — predicting "up" every day beats this model on raw correctness.
+- **Pred-rate `0.753` vs base-rate `0.613`** — model predicts "up" 75 % of the time despite reality being 61 %. Strongly biased even with `class_weight="balanced"`.
+
+That's the bar every future model has to clear. Full row in [`artifacts/results_log.csv`](artifacts/results_log.csv); raw artifact at `artifacts/predictions/baseline_v1-20260526-124439.json`.
 
 ## CLI
 
@@ -85,21 +100,21 @@ Self-contained (chart is base64-embedded; no internet needed to view). Contains 
 
 ### JSON artifact — `artifacts/predictions/<config-name>-<timestamp>.json`
 
-Written only when `output.predictions_json: true`. This is what lidr's `/api/signals/[ticker]` will eventually consume. Current shape (`schema_version: 1`):
+Written only when `output.predictions_json: true`. This is what lidr's `/api/signals/[ticker]` will eventually consume. Current shape (`schema_version: 1`), abridged from the live SPY baseline (`artifacts/predictions/baseline_v1-20260526-124439.json`):
 
 ```json
 {
   "schema_version": 1,
   "config_name": "baseline_v1",
   "ticker": "SPY",
-  "generated_at": "20260521-164329",
+  "generated_at": "20260526-124439",
   "metrics": {
-    "classification": { "accuracy": 0.556, "log_loss": 0.693, "base_logloss": 0.667, "base_rate": 0.613, "pred_rate": 0.501, "n_obs": 3914 },
-    "strategy":       { "cagr": 0.080, "sharpe": 0.67, "max_drawdown": -0.337, "final_equity": 3.28 },
-    "benchmark":      { "cagr": 0.145, "sharpe": 0.89, "max_drawdown": -0.337, "final_equity": 8.23 }
+    "classification": { "accuracy": 0.5565, "base_rate": 0.6134, "pred_rate": 0.7534, "log_loss": 0.6925, "base_logloss": 0.6672, "n_obs": 3914 },
+    "strategy":       { "cagr": 0.0796, "sharpe": 0.6656, "max_drawdown": -0.3375, "final_equity": 3.2847 },
+    "benchmark":      { "cagr": 0.1454, "sharpe": 0.8869, "max_drawdown": -0.3372, "final_equity": 8.2275 }
   },
   "predictions": [
-    { "date": "2010-10-04", "y_true": 1, "y_pred": 1, "probability_up": 0.612 },
+    { "date": "2010-10-18", "y_true": 1, "y_pred": 0, "probability_up": 0.4999 },
     "..."
   ]
 }
