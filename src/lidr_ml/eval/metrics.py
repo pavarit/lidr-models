@@ -29,7 +29,7 @@ def classification_metrics(y_true: pd.Series, y_pred: pd.Series, y_proba_1: pd.S
 def strategy_metrics(equity_curve: pd.Series, periods_per_year: int = 252) -> dict:
     returns = equity_curve.pct_change().dropna()
     if returns.empty:
-        return {"cagr": 0.0, "sharpe": 0.0, "max_drawdown": 0.0}
+        return {"cagr": 0.0, "sharpe": 0.0, "max_drawdown": 0.0, "final_equity": 0.0}
     years = len(returns) / periods_per_year
     cagr = equity_curve.iloc[-1] ** (1 / years) - 1 if years > 0 else 0.0
     sharpe = (returns.mean() / returns.std()) * np.sqrt(periods_per_year) if returns.std() > 0 else 0.0

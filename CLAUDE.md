@@ -6,7 +6,7 @@ This file orients any AI assistant (Claude Code, Claude Cowork, etc.) joining th
 
 ## Project Goal
 
-`lidr-ml` is the Python ML/backtesting pipeline that turns the technical signals from the sibling project [`lidr`](https://github.com/pavarit/lidr) into **empirically calibrated BUY / HOLD / SELL recommendations**. lidr's confidence values today are heuristics (normalized strength scores). This project's job is to replace them with probabilities learned from historical data — by training an ensemble model over the signals, backtested with walk-forward validation from pre-2008 to today.
+`lidr-ml` is the Python ML/backtesting pipeline that turns the technical signals from the sibling project [`lidr`](https://github.com/pavarit/lidr) into **empirically calibrated BUY / HOLD / SELL recommendations**. lidr's confidence values today are heuristics (normalized strength scores). This project's job is to replace them with probabilities learned from historical data — by training an ensemble model over the signals, backtested with walk-forward validation from 2005 to today.
 
 The pipeline emits a versioned JSON artifact that lidr's `/api/signals/[ticker]` route can read directly. No running Python service is needed until lidr's FastAPI-service roadmap item is triggered.
 
@@ -62,7 +62,7 @@ Reading top-down:
 4. **Target** (computed inline in `src/lidr_ml/pipeline.py::run_pipeline`) — for now, binary: was the *N*-day forward return positive? Will become 3-class (BUY/HOLD/SELL) once we have a useful model.
 5. **Backtest engine** (`src/lidr_ml/backtest/engine.py`) — expanding-window walk-forward. For each split: fit model on train slice, predict on test slice, store predictions. Never trains on data after the test period.
 6. **Model** (`src/lidr_ml/models/`) — pluggable. Today: logistic regression. Next: LightGBM, then a stacking meta-learner over both.
-7. **Eval + report** (`src/lidr_ml/eval/`) — metrics (accuracy, log loss, hit rate by year), equity curve assuming "go long when prediction = 1", HTML report written to `reports/<config>-<timestamp>/`. The report shows a **Strategy vs Buy & Hold** comparison table (CAGR, Sharpe, max drawdown, final equity for both legs) and a **per-year performance** table (strategy vs buy-hold return + excess) so regime-dependence is visible. A **Summary** section at the top translates the config into English and states the out-of-sample span (derived from the predictions, not the raw data range). Both the top classification metrics and the per-year table show **base_logloss** (the no-skill floor = entropy of the base rate) beside log loss, and the comparison/per-year tables green/red-highlight whichever side wins. The equity curve is marked to market with **1-day-forward returns**, not the N-day classification target — see Gotchas.
+7. **Eval + report** (`src/lidr_ml/eval/`) — classification metrics (`classification_metrics`), strategy metrics (`strategy_metrics`), and per-year breakdowns (`by_year` for classification, `performance_by_year` for strategy returns). The equity curve itself is built in `backtest/engine.py::add_strategy_returns` ("go long when prediction = 1, cash otherwise"). HTML report written to `reports/<config>-<timestamp>/`. The report shows a **Strategy vs Buy & Hold** comparison table (CAGR, Sharpe, max drawdown, final equity for both legs) and a **per-year performance** table (strategy vs buy-hold return + excess) so regime-dependence is visible. A **Summary** section at the top translates the config into English and states the out-of-sample span (derived from the predictions, not the raw data range). Both the top classification metrics and the per-year table show **base_logloss** (the no-skill floor = entropy of the base rate) beside log loss, and the comparison/per-year tables green/red-highlight whichever side wins. The equity curve is marked to market with **1-day-forward returns**, not the N-day classification target — see Gotchas.
 8. **Cross-run results log** (`src/lidr_ml/eval/results_log.py`) — `append_run()` appends one row per backtest to `artifacts/results_log.csv` (skill score, full-OOS + per-period log loss with base-rate floors, strategy vs benchmark CAGR/Sharpe/max-drawdown, excess) so "did this change help?" is answerable without opening every HTML report.
 
 Everything is wired together by `src/lidr_ml/pipeline.py::run_pipeline(config_path)`.
@@ -92,7 +92,7 @@ src/lidr_ml/
   backtest/
     engine.py             expanding-window walk-forward backtester + strategy returns
   eval/
-    metrics.py            accuracy, log loss, hit rate, equity curve, per-year breakdown
+    metrics.py            classification + strategy metrics, per-year breakdowns
     report.py             HTML report generator (base64-embedded chart)
     results_log.py        appends one row per run to artifacts/results_log.csv
 reports/                  generated HTML reports (gitignored except .gitkeep)
@@ -113,11 +113,11 @@ tests/
 ## Conventions (read before writing code)
 
 - **Python ≥3.10**, src-layout package; ruff for lint + format (`line-length = 100`, `target-version = "py310"`). Snake_case modules and functions.
-- **Signals are pure functions**: `(prices: DataFrame, params: dict) → Series` aligned to the input index. Conform to `signals/base.py::Signal`. Must be lookahead-safe — `f(prices[:t])[t] == f(prices)[t]`.
-- **Models conform to `models/base.py::Model`**: `fit(X, y)` + `predict_proba(X) → DataFrame` keyed by class.
+- **Signals are pure functions**: `(prices: DataFrame, params: dict) → Series` aligned to the input index. Conform to `signals/base.py::SignalFn`. Must be lookahead-safe — `f(prices[:t])[t] == f(prices)[t]`.
+- **Models conform to `models/base.py::Model`**: three methods — `fit(X, y) -> None`, `predict_proba(X) -> np.ndarray` (shape `(n_samples, n_classes)`), and `predict(X) -> np.ndarray`.
 - **When adding a signal, three things must land in the same PR**:
   1. Register in `signals/registry.py`.
-  2. Add to the `SIGNALS` table in `tests/test_no_lookahead.py` (the lookahead test is non-negotiable).
+  2. Add to the `SIGNAL_CASES` table in `tests/test_no_lookahead.py` (the lookahead test is non-negotiable).
   3. Add an `ACCURACY_CASES` entry in `tests/test_signal_accuracy.py` (inline reference formula + ≥2 spot checks against hand-derived values).
 - **Backtests use expanding-window walk-forward only.** Random k-fold leaks information across time and is rejected on sight.
 - **Transaction costs are modeled in every backtest.** Default 5 bps; configurable but never zero in a config that gets compared to buy-and-hold.
@@ -142,8 +142,6 @@ Strategic forks in the road — *why we chose X over Y*. For procedural rules se
 Non-obvious things that bit us. Each entry earned its place by causing a real problem.
 
 - **The equity curve runs on 1-day-forward returns, not the N-day classification target.** Compounding the N-day return on every daily row counts the same window ~N times and inflates final equity by an order of magnitude. See `pipeline.py::run_pipeline` (`daily_fwd_return` is the equity input; `fwd_clean` is the classifier target only) and `tests/test_strategy_returns.py`, which is what makes sure the bug stays fixed.
-- **Cloud-review iterations have silently truncated CLAUDE.md.** Twice now (#1 and #2 PRs from 2026-05-22) a remote-authored CLAUDE.md commit dropped the older Recent Changes entries and the entire Maintenance Instructions section, and replaced "Boon confirmed" with "confirmed". If a remote-authored CLAUDE.md commit looks shorter than the previous tip, diff before merging and restore explicitly.
-- **The Cowork sandbox mount has served stale/truncated copies of freshly-edited files mid-session.** File mtimes did not advance, so cached `__pycache__` bytecode masked edits. If a run reports "old" behavior after an edit, clear `__pycache__`, confirm the mtime advanced, and verify against a sandbox-local copy. The committed source on disk is authoritative.
 - **Python 3.14 has no parquet wheels yet.** `data/loaders.py` caches OHLCV in pickle, not parquet. Don't "fix" the loader by switching back to parquet without verifying `pyarrow`/`fastparquet` wheels exist for the target Python — the comment at `loaders.py:50` documents why.
 - **Typer collapses single-command apps into a flat CLI.** Removing `list-signals` from `cli.py` would silently break `python -m lidr_ml backtest <config>` (Typer would re-flatten the entry point). Don't remove `list-signals` until a third real command lands.
 - **`yfinance` only has currently-listed tickers** — survivorship bias. Fine for SPY/QQQ/sector ETFs; suspicious for individual-name backtests. Don't trust individual-stock results without a CRSP-style source.
@@ -162,10 +160,12 @@ Priority order, reset on 2026-05-21 around a single near-term goal: **prove the 
 
 — Edge gate: items below stay parked until something above beats buy-and-hold. —
 
-7. **Add a final-model fit + serialize step.** The backtest only evaluates (throwaway per-split models); nothing fits a model on all data or writes `artifacts/models/`. Before serving live predictions, fit one model on all available history, serialize it, and write the prediction artifact. Trigger: once a model beats buy-and-hold. Revisit `class_weight`/calibration here (see Key Decisions).
-8. **Define and write the artifact JSON schema.** Decide what fields lidr needs (predicted class? probability? per-signal contribution?). Document and version it (currently `schema_version: 1`, with `metrics.classification/strategy/benchmark`).
-9. **Wire lidr's `/api/signals/[ticker]` to read the artifact.** That's the bridge moment. Coordinate with the lidr CLAUDE.md.
-10. **Wire up MLflow for experiment tracking.** Replace the timestamped-folder report + CSV log with proper logged runs and a comparison UI. *Deferred: the CSV results log (#1) covers the "did this help?" need until the run count is large enough to justify the heavier tooling.*
+7. **Add a final-model fit + serialize step.** The backtest only evaluates (throwaway per-split models); nothing fits a model on all data or writes `artifacts/models/`. Before serving live predictions, fit one model on all available history, serialize it, and write the prediction artifact. Trigger: once a model beats buy-and-hold.
+8. **Calibrate `predict_proba` via Platt or isotonic regression.** The baseline's `class_weight="balanced"` distorts probabilities away from true frequencies (see Gotchas) — fine for the up/down decision the backtest evaluates, not OK to ship to lidr as a calibrated probability. Switch to `class_weight=None` plus a calibration wrapper before any prediction artifact is consumed by lidr.
+9. **Migrate the output from binary to 3-class (BUY / HOLD / SELL).** Today's target is binary (`fwd_return > 0`). The project's stated deliverable is 3-class. Two paths: (a) post-hoc bucketing of the calibrated probability into BUY / HOLD / SELL bands, (b) reformulate the target itself (e.g., three quantile bins of `fwd_return`). Decision punt until a binary model with edge exists; the 3-class formulation changes how "beats buy-and-hold" is measured.
+10. **Evolve the artifact JSON schema as lidr's needs firm up.** Schema is already implemented at `schema_version: 1` (see `pipeline.py:174-189`: `config_name`, `ticker`, `generated_at`, `metrics.{classification,strategy,benchmark}`, `predictions[].{date,y_true,y_pred,probability_up}`). Bump the version when lidr's `/api/signals/[ticker]` is ready to consume it and any fields need to change (per-signal contributions, BUY/HOLD/SELL class labels from #9, etc.).
+11. **Wire lidr's `/api/signals/[ticker]` to read the artifact.** That's the bridge moment. Coordinate with the lidr CLAUDE.md.
+12. **Wire up MLflow for experiment tracking.** Replace the timestamped-folder report + CSV log with proper logged runs and a comparison UI. *Deferred: the CSV results log (#1) covers the "did this help?" need until the run count is large enough to justify the heavier tooling.*
 
 ## Active Task
 
@@ -177,6 +177,21 @@ Signal accuracy test harness shipped (2026-05-22, see Recent Changes). Next: por
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-26 — Drift-fix pass (Batch 1 of 6)
+
+Drift audit against the code surfaced several stale facts in CLAUDE.md and one dead config field. Fixes in this commit, no behavior change:
+
+- **CLAUDE.md Conventions**: protocol names corrected — `Signal` → `SignalFn` (real name at `signals/base.py:19`); Model protocol now lists all three methods (`fit`, `predict_proba`, `predict`) with correct `predict_proba -> np.ndarray` return type, not a DataFrame; signal test table is `SIGNAL_CASES`, not `SIGNALS`.
+- **Pipeline walkthrough step 7 + folder map for `metrics.py`**: dropped the phantom "hit rate" function; replaced with the actual exports (`classification_metrics`, `strategy_metrics`, `by_year`, `performance_by_year`) and noted that the equity curve itself is built in `backtest/engine.py::add_strategy_returns`, not `metrics.py`.
+- **Project Goal**: backtest range corrected from "pre-2008 to today" to "2005 to today" (matches `configs/baseline.yaml` `start_date: 2005-01-01`).
+- **Gotchas**: dropped the two Cowork-specific bullets (cloud-review truncating CLAUDE.md, and Cowork sandbox stale-mount) — those are environment-specific and unhelpful to contributors not on Anthropic's cloud dev stack.
+- **Next Up**: rewrote #8 (artifact JSON schema is already implemented at `schema_version: 1`; remaining work is "evolve as lidr's API needs firm up"). Promoted two previously-buried items to standalone roadmap entries: **calibrate `predict_proba` via Platt/isotonic** (was a parenthetical under #7), and **migrate binary target to 3-class BUY/HOLD/SELL** (was an offhand line in the pipeline walkthrough only). Both stay edge-gated. Renumbered downstream items.
+- **Configs**: removed dead `output.report_html: true` field from both YAMLs — `pipeline.py` always writes the HTML report unconditionally and never read this flag. Kept `output.predictions_json` which is honored.
+- **`strategy_metrics` empty-path**: return dict now includes `final_equity: 0.0` so callers don't need to branch on shape (the non-empty path already returned it).
+- **README**: "synthetic-data fallback" → "synthetic-data alternative" — `source: synthetic` is an explicit config switch, not an automatic fallback when yfinance fails.
+
+This is the first of six batches mapped out from a full drift report. Remaining: LICENSE + CONTRIBUTING + badges; README YAML/JSON schema reference; smaller operational notes (yfinance auto-adjust, cache invalidation); re-run SPY baseline so README numbers trace to `results_log.csv`; README ↔ CLAUDE.md restructure with architecture diagram + report screenshot.
 
 ### 2026-05-26 — Adopt Conventions + Gotchas; partition for one-fact-one-place
 

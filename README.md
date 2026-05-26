@@ -27,7 +27,7 @@ After `make install`, you can also invoke the CLI directly as `python -m lidr_ml
 - Expanding-window walk-forward backtest (no lookahead, regression-tested)
 - One ported signal: SMA crossover (parity with lidr's `lib/signals/sma.ts`)
 - One base model: logistic regression
-- yfinance loader with a synthetic-data fallback for offline development
+- yfinance loader with a synthetic-data alternative (`source: synthetic` in any config) for offline development
 - Transaction costs (5 bps default) baked into the equity curve
 - Report benchmarks the strategy against buy-and-hold (CAGR, Sharpe, max drawdown, per-year excess) with base-rate floors on log loss
 - Cross-run results log at `artifacts/results_log.csv` — one row appended per backtest

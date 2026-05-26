@@ -41,5 +41,4 @@ backtest:
   transaction_cost_bps: 5
 
 output:
-  report_html: true
-  predictions_json: true
+  predictions_json: true   # HTML report is always written; see README for the config schema
