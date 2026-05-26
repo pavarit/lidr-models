@@ -39,6 +39,96 @@ After `make install`, you can also invoke the CLI directly as `python -m lidr_ml
 
 **SPY baseline status:** the single-signal logistic model **does not** beat buy-and-hold (CAGR ~8.0% vs ~14.5%, log loss at the no-skill floor). That's the bar every future model must clear.
 
+## CLI
+
+Two commands, available as `python -m lidr_ml <command>` or (after `make install`) `lidr-ml <command>`:
+
+| Command | Args | What it does |
+| --- | --- | --- |
+| `backtest` | `<config>` (path to a YAML) | Runs the full pipeline: load data → compute signals → train walk-forward → write HTML report + JSON artifact + CSV log row. |
+| `list-signals` | — | Prints every signal name currently registered, one per line. Useful when authoring a new config. |
+
+## Config schema
+
+A config is YAML. All fields below are accepted by [`src/lidr_ml/pipeline.py::run_pipeline`](src/lidr_ml/pipeline.py); unrecognized top-level keys are ignored. Two reference examples live in [`configs/`](configs/).
+
+| Field | Type | Required | Default | Notes |
+| --- | --- | --- | --- | --- |
+| `name` | str | yes | — | Identifies the run; used in report dir name (`reports/<name>-<timestamp>/`) and the `config_name` column of `results_log.csv`. |
+| `description` | str | no | — | Free text; rendered into the report's Summary section. |
+| `data.source` | str | yes | — | `yfinance` or `synthetic`. `yfinance` requires internet; `synthetic` generates a deterministic geometric-Brownian-motion price series. |
+| `data.tickers` | list[str] | yes | — | Must be a list, but pipeline currently rejects length > 1. Multi-ticker is gated on adding cross-sectional features. |
+| `data.start_date` | str (ISO) | yes | — | e.g. `2005-01-01`. |
+| `data.end_date` | str (ISO) | yes | — | e.g. `2026-05-01`. |
+| `data.synthetic.drift_annual` | float | no | `0.07` | Used only when `data.source: synthetic`. |
+| `data.synthetic.vol_annual` | float | no | `0.16` | Used only when `data.source: synthetic`. |
+| `data.synthetic.seed` | int | no | `42` | Used only when `data.source: synthetic`. |
+| `signals` | list[dict] | yes | — | Each entry: `{name, params}`. `name` must match a registered signal — see `list-signals`. |
+| `target.type` | str | yes | — | Only `forward_return_binary` is currently supported. |
+| `target.horizon_days` | int | yes | — | N for "was the N-day forward return > `threshold`?" |
+| `target.threshold` | float | no | `0.0` | Return > threshold → class 1, else class 0. |
+| `model.type` | str | yes | — | Only `logistic_regression` is currently supported. |
+| `model.params` | dict | no | `{}` | Forwarded to the model class's `__init__`. For logistic, sklearn `LogisticRegression` kwargs (`C`, `class_weight`, …). |
+| `backtest.cv` | str | yes | — | Only `expanding_window` is currently supported. |
+| `backtest.initial_train_years` | int | yes | — | Size of the first training window. |
+| `backtest.test_period_months` | int | yes | — | How far the window expands per step. |
+| `backtest.transaction_cost_bps` | float | no | `5.0` | Charged on every position change in the equity curve. |
+| `output.predictions_json` | bool | no | `false` | If true, writes the prediction artifact (see Outputs → JSON artifact). The HTML report is always written. |
+
+## Outputs
+
+Every run writes three things:
+
+### HTML report — `reports/<config-name>-<timestamp>/report.html`
+
+Self-contained (chart is base64-embedded; no internet needed to view). Contains a config summary, top-line classification metrics with the no-skill floor (`base_logloss`) beside log loss, Strategy-vs-Buy&Hold comparison table (CAGR, Sharpe, max drawdown, final equity), per-year classification + per-year strategy returns with excess-vs-buy-and-hold, and the equity curve.
+
+### JSON artifact — `artifacts/predictions/<config-name>-<timestamp>.json`
+
+Written only when `output.predictions_json: true`. This is what lidr's `/api/signals/[ticker]` will eventually consume. Current shape (`schema_version: 1`):
+
+```json
+{
+  "schema_version": 1,
+  "config_name": "baseline_v1",
+  "ticker": "SPY",
+  "generated_at": "20260521-164329",
+  "metrics": {
+    "classification": { "accuracy": 0.556, "log_loss": 0.693, "base_logloss": 0.667, "base_rate": 0.613, "pred_rate": 0.501, "n_obs": 3914 },
+    "strategy":       { "cagr": 0.080, "sharpe": 0.67, "max_drawdown": -0.337, "final_equity": 3.28 },
+    "benchmark":      { "cagr": 0.145, "sharpe": 0.89, "max_drawdown": -0.337, "final_equity": 8.23 }
+  },
+  "predictions": [
+    { "date": "2010-10-04", "y_true": 1, "y_pred": 1, "probability_up": 0.612 },
+    "..."
+  ]
+}
+```
+
+Bump `schema_version` whenever a field is renamed, removed, or its type changes. Additive changes (new optional fields) don't require a bump.
+
+### Cross-run results log — `artifacts/results_log.csv`
+
+One row appended per backtest. Git-tracked so experiment history accumulates across machines. Columns (in order):
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `run_id` | str | Timestamp `YYYYMMDD-HHMMSS` — matches the `reports/` subdirectory. |
+| `config_name` | str | From `name` in the YAML. |
+| `ticker` | str | Single ticker (see config schema note). |
+| `oos_start`, `oos_end` | date | First and last date in the out-of-sample prediction series. |
+| `n_oos` | int | Number of OOS predictions (rows in the stitched walk-forward output). |
+| `skill_score` | float | `1 − log_loss / base_logloss`. Positive → beats the no-skill floor. |
+| `base_logloss`, `log_loss`, `accuracy` | float | Full-OOS classification metrics. |
+| `base_logloss_2025`, `log_loss_2025` | float | Same, sliced to calendar year 2025. Empty when the year is missing or degenerate. |
+| `base_logloss_2026q1`, `log_loss_2026q1` | float | Same, sliced to Q1 2026. |
+| `strategy_cagr`, `strategy_sharpe`, `strategy_max_dd`, `strategy_final_equity` | float | Strategy (the model's equity curve, net of transaction costs). |
+| `bench_cagr`, `bench_sharpe`, `bench_max_dd`, `bench_final_equity` | float | Buy-and-hold benchmark on the same OOS span. |
+| `excess_cagr`, `excess_sharpe` | float | Strategy minus benchmark. The "did this help?" columns. |
+| `report_path` | str | Relative path to the HTML report from the project root. |
+
+To remove a bad row (e.g. a buggy run), edit the CSV directly — git diff will show what changed.
+
 ## What's next
 
 Single near-term goal: **prove the model has an edge over buy-and-hold** before building any serving/integration plumbing. See `CLAUDE.md` → Next Up for the full priority list. Short version: port the remaining five lidr signals (RSI, MACD, Bollinger, breakout, volume) → add LightGBM as a second base learner → stacking → regime features. Final-model fit/serialize, artifact schema, lidr wiring, and MLflow are all explicitly **gated** on something actually beating buy-and-hold first.
