@@ -84,41 +84,66 @@ def main() -> None:
     six["strategy_equity"] /= six["strategy_equity"].iloc[0]
     six["buy_hold_equity"] /= six["buy_hold_equity"].iloc[0]
 
-    fig, ax = plt.subplots(figsize=(11, 5.5))
-    ax.plot(
-        six.index,
-        six["buy_hold_equity"],
-        label="Buy & Hold (SPY)",
-        color="#444",
-        linewidth=1.8,
-    )
-    ax.plot(
-        v1_aligned.index,
-        v1_aligned["strategy_equity"],
-        label="Logistic, 1 signal (baseline_v1)",
-        color="#1f77b4",
-        linewidth=1.4,
-    )
-    ax.plot(
-        six.index,
-        six["strategy_equity"],
-        label="Logistic, 6 signals (baseline_six_signals)",
-        color="#d62728",
-        linewidth=1.4,
-    )
-    ax.set_yscale("log")
-    ax.set_title(
-        f"SPY equity curves, OOS {start.date()} → {end.date()}  "
-        "(both strategies vs buy-and-hold)"
-    )
-    ax.set_ylabel("Equity (log scale, common start = 1.0)")
-    ax.set_xlabel("Date")
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(loc="upper left")
-    fig.tight_layout()
+    def render(curves: dict, title: str, out_path: Path, log_y: bool) -> None:
+        fig, ax = plt.subplots(figsize=(11, 5.0))
+        styles = {
+            "Buy & Hold (SPY)": ("#444", 1.8),
+            "Logistic, 1 signal (baseline_v1)": ("#1f77b4", 1.4),
+            "Logistic, 6 signals (baseline_six_signals)": ("#d62728", 1.4),
+        }
+        for label, series in curves.items():
+            color, lw = styles[label]
+            ax.plot(series.index, series.values, label=label, color=color, linewidth=lw)
+        if log_y:
+            ax.set_yscale("log")
+        ax.set_title(title)
+        ax.set_ylabel(
+            "Equity (log scale, common start = 1.0)"
+            if log_y
+            else "Equity (common start = 1.0)"
+        )
+        ax.set_xlabel("Date")
+        ax.grid(True, which="both", alpha=0.3)
+        ax.legend(loc="upper left")
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=130)
+        plt.close(fig)
+
+    full_curves = {
+        "Buy & Hold (SPY)": six["buy_hold_equity"],
+        "Logistic, 1 signal (baseline_v1)": v1_aligned["strategy_equity"],
+        "Logistic, 6 signals (baseline_six_signals)": six["strategy_equity"],
+    }
     chart_path = OUT_DIR / "chart.png"
-    fig.savefig(chart_path, dpi=130)
-    plt.close(fig)
+    render(
+        full_curves,
+        f"SPY equity curves, OOS {start.date()} → {end.date()}  (full window, log scale)",
+        chart_path,
+        log_y=True,
+    )
+
+    # Recent-window zoom (2024 onwards), rebased to 1.0 at the zoom start.
+    # The full-window chart is dominated by 15 years of compounding so the
+    # last 2 years are visually crushed; the zoom is where you can see what
+    # the model has been doing recently.
+    zoom_start = pd.Timestamp("2024-01-01")
+    recent_v1 = v1_aligned.loc[v1_aligned.index >= zoom_start, "strategy_equity"].copy()
+    recent_six = six.loc[six.index >= zoom_start, "strategy_equity"].copy()
+    recent_bh = six.loc[six.index >= zoom_start, "buy_hold_equity"].copy()
+    recent_v1 /= recent_v1.iloc[0]
+    recent_six /= recent_six.iloc[0]
+    recent_bh /= recent_bh.iloc[0]
+    render(
+        {
+            "Buy & Hold (SPY)": recent_bh,
+            "Logistic, 1 signal (baseline_v1)": recent_v1,
+            "Logistic, 6 signals (baseline_six_signals)": recent_six,
+        },
+        f"SPY equity curves, recent zoom {zoom_start.date()} → {end.date()}  "
+        "(rebased to 1.0 at zoom start, linear scale)",
+        OUT_DIR / "chart_recent.png",
+        log_y=False,
+    )
 
     # Final-equity snapshot from the aligned series.
     v1_final = float(v1_aligned["strategy_equity"].iloc[-1])
