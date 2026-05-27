@@ -68,7 +68,7 @@ The HTML report contains: a config summary, top-line classification metrics with
 
 - Config-driven pipeline (YAML in, HTML report out)
 - Expanding-window walk-forward backtest (no lookahead, regression-tested)
-- One ported signal: SMA crossover (parity with lidr's `lib/signals/sma.ts`)
+- Six signals: SMA crossover, RSI, MACD, Bollinger Bands, breakout, volume (the latter five ported from lidr's TS with numerical parity) — see [docs/signals.md](docs/signals.md) for what each one measures, with charts on real SPY data
 - One base model: logistic regression
 - yfinance loader with a synthetic-data alternative (`source: synthetic` in any config) for offline development
 - Transaction costs (5 bps default) baked into the equity curve
