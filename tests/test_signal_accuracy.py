@@ -69,6 +69,28 @@ def constant_prices(n: int = 60, value: float = 100.0) -> pd.DataFrame:
     return pd.DataFrame({"close": pd.Series([value] * n, dtype=float)})
 
 
+def volume_spike_prices() -> pd.DataFrame:
+    """Constructed close+volume fixture for volume signal spot checks.
+
+    Layout (20 rows, period=10):
+        indices  0..8  → volume = 10  (baseline)
+        index    9     → volume = 20  (the spike — heavy volume day)
+        indices 10..19 → volume = 10  (return to baseline)
+
+    The close column is unused by the volume signal but required by the
+    DataFrame shape; we fill it with 100.
+
+    Hand-derived ratios at key indices (window = trailing 10 values
+    *including* today; ratio = today_volume / window_mean):
+        idx 9:  window = [10]*9 + [20].          mean = 110/10 = 11.   ratio = 20/11
+        idx 10: window = [10]*8 + [20, 10].      mean = 110/10 = 11.   ratio = 10/11
+        idx 19: window = [10]*10.                mean = 10.            ratio = 1.0
+    """
+    volumes = np.array([10.0] * 9 + [20.0] + [10.0] * 10)
+    closes = np.full(20, 100.0)
+    return pd.DataFrame({"close": closes, "volume": volumes})
+
+
 def step_prices() -> pd.DataFrame:
     """Constructed step-price fixture for breakout spot checks.
 
@@ -131,6 +153,26 @@ def _rsi_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
             rsi[k] = 100.0 if al == 0.0 else 100.0 - 100.0 / (1.0 + ag / al)
 
     return pd.Series(rsi, index=prices.index)
+
+
+def _volume_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
+    """Reference volume-ratio — loop over windows, no pd.rolling.
+
+    Structurally different from the signal (which uses pd.Series.rolling.mean).
+    Matches lidr's TS contract: today's volume divided by the mean of the
+    trailing ``period`` volumes (window includes today), NaN when window is
+    not yet full.
+    """
+    period = params["period"]
+    vol = prices["volume"].to_numpy()
+    n = len(vol)
+    out = np.full(n, np.nan)
+    for i in range(period - 1, n):
+        window = vol[i - period + 1 : i + 1]
+        avg = window.mean()
+        if avg > 0:
+            out[i] = vol[i] / avg
+    return pd.Series(out, index=prices.index)
 
 
 def _breakout_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
@@ -281,6 +323,21 @@ ACCURACY_CASES = [
             (13, float("nan")),   # last index before seed (period=14 → seed at idx 14)
             (14, 200.0 / 3.0),    # seed: avg_gain=1, avg_loss=0.5, rs=2, rsi=66.6667
             (15, 3000.0 / 43.0),  # first recursion step ≈ 69.7674
+        ],
+    ),
+    (
+        "volume",
+        {"period": 10},
+        _volume_reference,
+        volume_spike_prices,
+        # Spot checks on volume_spike_prices (see fixture docstring for layout).
+        # The 10-day window first sees the volume spike at index 9, then it
+        # rolls through the window in subsequent indices, then drops off.
+        [
+            (8, float("nan")),    # window not yet full (need 10 values, only 9 available)
+            (9, 20.0 / 11.0),     # spike day: window = [10]*9+[20], mean=11, ratio = 20/11
+            (10, 10.0 / 11.0),    # spike rolls into window but isn't today: window mean=11, today=10
+            (19, 1.0),            # spike has rolled out; window all 10s, ratio = 1.0
         ],
     ),
     (
