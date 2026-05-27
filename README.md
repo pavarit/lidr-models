@@ -128,6 +128,7 @@ A config is YAML. All fields below are accepted by [`src/lidr_ml/pipeline.py::ru
 | `backtest.test_period_months` | int | yes | — | How far the window expands per step. |
 | `backtest.transaction_cost_bps` | float | no | `5.0` | Charged on every position change in the equity curve. |
 | `output.predictions_json` | bool | no | `false` | If true, writes the prediction artifact (see Outputs → JSON artifact). The HTML report is always written. |
+| `output.results_log` | bool | no | `true` | If false, the run is **not** appended to `artifacts/results_log.csv`. Set to false in `dev_synthetic.yaml` so smoke-test / CI runs don't pollute the tracked log with synthetic rows. |
 
 ## Outputs
 
