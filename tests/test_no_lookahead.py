@@ -24,6 +24,7 @@ from lidr_ml.signals import get_signal
 # Add one entry per signal as you port them.
 SIGNAL_CASES = [
     ("sma_crossover", {"fast": 20, "slow": 50}),
+    ("rsi", {"period": 14}),
 ]
 
 
