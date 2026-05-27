@@ -1,0 +1,60 @@
+# Six-signal logistic baseline: SPY, 2005 → today, all six ported signals.
+# Sibling of baseline.yaml — same target/model/backtest/costs, only the
+# feature set changes. Answers "does feeding all six signals into the
+# existing logistic regression beat buy-and-hold?" before moving to LightGBM.
+
+name: baseline_six_signals
+description: |
+  Six-feature checkpoint. SPY only, all six ported signals (sma_crossover,
+  rsi, macd, bollinger, breakout, volume), logistic regression predicting
+  "5-day forward return > 0". Same params as baseline_v1 so the only delta
+  vs the established floor is the feature set.
+
+data:
+  source: yfinance
+  tickers: [SPY]
+  start_date: 2005-01-01
+  end_date: 2026-05-01
+
+signals:
+  - name: sma_crossover
+    params:
+      fast: 50
+      slow: 200
+  - name: rsi
+    params:
+      period: 14
+  - name: macd
+    params:
+      fast: 12
+      slow: 26
+      signal: 9
+  - name: bollinger
+    params:
+      period: 20
+  - name: breakout
+    params:
+      period: 252
+  - name: volume
+    params:
+      period: 50
+
+target:
+  type: forward_return_binary
+  horizon_days: 5
+  threshold: 0.0
+
+model:
+  type: logistic_regression
+  params:
+    C: 1.0
+    class_weight: balanced
+
+backtest:
+  cv: expanding_window
+  initial_train_years: 5
+  test_period_months: 12
+  transaction_cost_bps: 5
+
+output:
+  predictions_json: true

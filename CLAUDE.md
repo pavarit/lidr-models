@@ -57,6 +57,7 @@ Everything is wired together by `src/lidr_ml/pipeline.py::run_pipeline(config_pa
 ```
 configs/                  experiment configs (YAML, one per run)
   baseline.yaml           SPY, 2005–today, SMA crossover + logistic regression
+  baseline_six_signals.yaml  same as baseline but all six signals — the edge-gate checkpoint (still loses)
   dev_synthetic.yaml      same as baseline but synthetic data — offline-safe smoke test
 data/
   raw/                    cached OHLCV pulled from yfinance
@@ -167,14 +168,32 @@ Cross-references to Next Up items use names, not numbers — see Maintenance Ins
 
 ## Active Task
 
-_Nothing currently in-flight._
-
-All five signal ports shipped 2026-05-27 (see Recent Changes) — the pipeline now has six features available. Next: re-run the logistic-regression baseline on all six features (sma_crossover + rsi + macd + bollinger + breakout + volume) as a cheap checkpoint. If six features still can't beat buy-and-hold, skip to LightGBM (next on the roadmap); if they do beat it, the edge gate opens and the downstream serving/integration items unlock.
+**LightGBM as second base learner (Next Up: LightGBM).** The six-feature logistic checkpoint ran 2026-05-27 (see Recent Changes) and lost to buy-and-hold by every metric except max drawdown — `excess_cagr = -7.9%`, `skill_score = -0.038`, accuracy 0.515 below the 0.60 base rate. So the bottleneck isn't the feature count, it's the linear-model assumption. Next move per the roadmap: implement `src/lidr_ml/models/lightgbm.py` against the `Model` protocol, add a config that uses it over the same six signals, see whether a nonlinear learner finds anything the logistic regression can't.
 
 <!-- Update this section when work is in progress. Replace with `_Nothing currently in-flight._`
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-27 — Six-signal logistic baseline checkpoint (edge gate stays closed)
+
+Ran `baseline_six_signals.yaml` — same target/model/backtest/costs as `baseline_v1`, only the feature set changed (added rsi, macd, bollinger, breakout, volume to sma_crossover). New row appended to `artifacts/results_log.csv` at `run_id=20260527-120203`. OOS: 2010-12-30 → 2026-04-23, 3,862 days (later start than baseline_v1 because of the 252-day breakout warmup — therefore only `excess_*` is directly comparable across the two rows).
+
+**Verdict: no edge.** Six features lose to buy-and-hold by every metric except max drawdown, and slightly underperform even the single-signal floor on equity terms.
+
+| Metric | baseline_v1 | baseline_six_signals | Δ |
+|---|---|---|---|
+| skill_score | -0.0380 | -0.0376 | +0.0004 (noise) |
+| accuracy | 0.556 | 0.515 | -0.041 (and well below 0.60 base rate) |
+| strategy CAGR | 7.96% | 6.07% | -1.89 pp |
+| strategy Sharpe | 0.666 | 0.582 | -0.08 |
+| strategy max DD | -33.7% | -22.9% | +10.8 pp (shallower) |
+| strategy final equity | 3.28× | 2.47× | -0.81× |
+| excess CAGR vs B&H | -6.6% | -7.9% | -1.3 pp |
+
+The one bright spot is max drawdown: the six-feature model is in cash more often during deep selloffs. That's not edge but it is directional information. **The bottleneck is the linear-model assumption, not the feature count** — adding five orthogonal signals didn't move skill_score and made accuracy *worse*. Next move per the roadmap is LightGBM (now Active Task).
+
+**Aborted-bug worth flagging.** The first version of `scripts/verify_six_signal_baseline.py` had `prices["Close"]` (capital C). The yfinance loader normalizes columns to lowercase (`loaders.py:77`); the script's fallback `prices.iloc[:, 0]` silently returned the `open` column, producing an equity curve that ended at ~0.6× when results_log said 2.47×. Caught by sanity-checking the chart against the logged final equity. Lesson: chart-vs-log cross-check is a fast first-pass test for any one-off verification script that re-derives metrics from the predictions JSON.
 
 ### 2026-05-27 — Signals explainer doc (PR #13)
 
