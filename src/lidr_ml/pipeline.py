@@ -126,30 +126,35 @@ def run_pipeline(config_path: Path) -> PipelineResult:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
     # Log this run to the cross-run results CSV so "did this change help?" is
-    # answerable without opening individual HTML reports.
-    log_path = PROJECT_ROOT / "artifacts" / "results_log.csv"
-    try:
-        out_dir_for_log = PROJECT_ROOT / "reports" / f"{name}-{stamp}"
-        append_run(
-            log_path=log_path,
-            run_id=stamp,
-            config_name=name,
-            ticker=ticker,
-            predictions=result.predictions,
-            cls_m=cls_m,
-            strat_m=strat_m,
-            bench_m=bench_m,
-            by_year_df=yr,
-            report_path=out_dir_for_log / "report.html",
-            project_root=PROJECT_ROOT,
-        )
-        skill = cls_m.get("base_logloss", 0) or 0
-        skill_str = f"{1.0 - cls_m['log_loss'] / skill:.4f}" if skill > 0 else "n/a"
-        excess = (strat_m.get("cagr") or 0.0) - (bench_m.get("cagr") or 0.0)
-        print(f"  Results log → {log_path.relative_to(PROJECT_ROOT)}  "
-              f"(skill_score={skill_str}, excess_cagr={excess:+.4f})")
-    except Exception as exc:  # noqa: BLE001
-        print(f"  WARNING: could not write results log: {exc}")
+    # answerable without opening individual HTML reports. The smoke-test config
+    # opts out via `output.results_log: false` so test runs don't pollute the
+    # tracked CSV with synthetic rows.
+    if config.get("output", {}).get("results_log", True):
+        log_path = PROJECT_ROOT / "artifacts" / "results_log.csv"
+        try:
+            out_dir_for_log = PROJECT_ROOT / "reports" / f"{name}-{stamp}"
+            append_run(
+                log_path=log_path,
+                run_id=stamp,
+                config_name=name,
+                ticker=ticker,
+                predictions=result.predictions,
+                cls_m=cls_m,
+                strat_m=strat_m,
+                bench_m=bench_m,
+                by_year_df=yr,
+                report_path=out_dir_for_log / "report.html",
+                project_root=PROJECT_ROOT,
+            )
+            skill = cls_m.get("base_logloss", 0) or 0
+            skill_str = f"{1.0 - cls_m['log_loss'] / skill:.4f}" if skill > 0 else "n/a"
+            excess = (strat_m.get("cagr") or 0.0) - (bench_m.get("cagr") or 0.0)
+            print(f"  Results log → {log_path.relative_to(PROJECT_ROOT)}  "
+                  f"(skill_score={skill_str}, excess_cagr={excess:+.4f})")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  WARNING: could not write results log: {exc}")
+    else:
+        print("  Results log → skipped (output.results_log: false)")
 
     out_dir = PROJECT_ROOT / "reports" / f"{name}-{stamp}"
     report_path = write_report(

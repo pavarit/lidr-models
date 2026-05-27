@@ -42,3 +42,4 @@ backtest:
 
 output:
   predictions_json: true   # HTML report is always written; see README for the config schema
+  results_log: false       # smoke test: don't pollute the tracked artifacts/results_log.csv
