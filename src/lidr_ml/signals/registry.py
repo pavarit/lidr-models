@@ -34,4 +34,4 @@ def get_signal(name: str) -> SignalFn:
 
 # Import side-effect modules so their @register decorators run.
 # Every new signal module needs a line here.
-from lidr_ml.signals import rsi, sma_crossover  # noqa: E402, F401
+from lidr_ml.signals import macd, rsi, sma_crossover  # noqa: E402, F401

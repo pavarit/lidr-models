@@ -25,6 +25,7 @@ from lidr_ml.signals import get_signal
 SIGNAL_CASES = [
     ("sma_crossover", {"fast": 20, "slow": 50}),
     ("rsi", {"period": 14}),
+    ("macd", {"fast": 12, "slow": 26, "signal": 9}),
 ]
 
 
