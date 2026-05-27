@@ -57,6 +57,7 @@ Everything is wired together by `src/lidr_ml/pipeline.py::run_pipeline(config_pa
 ```
 configs/                  experiment configs (YAML, one per run)
   baseline.yaml           SPY, 2005–today, SMA crossover + logistic regression
+  baseline_six_signals.yaml  same as baseline but all six signals — the edge-gate checkpoint (still loses)
   dev_synthetic.yaml      same as baseline but synthetic data — offline-safe smoke test
 data/
   raw/                    cached OHLCV pulled from yfinance
@@ -168,14 +169,39 @@ Cross-references to Next Up items use names, not numbers — see Maintenance Ins
 
 ## Active Task
 
-_Nothing currently in-flight._
-
-All five signal ports shipped 2026-05-27 (see Recent Changes) — the pipeline now has six features available. Next: re-run the logistic-regression baseline on all six features (sma_crossover + rsi + macd + bollinger + breakout + volume) as a cheap checkpoint. If six features still can't beat buy-and-hold, skip to LightGBM (next on the roadmap); if they do beat it, the edge gate opens and the downstream serving/integration items unlock.
+**LightGBM as second base learner (Next Up: LightGBM).** The six-feature logistic checkpoint ran 2026-05-27 (see Recent Changes) and finished essentially **tied** with the single-signal baseline in probability space — both score `skill_score ≈ -0.038` (within noise of each other; both anti-informative vs the no-skill floor). Neither beats buy-and-hold on the full 15-year OOS window. The full-window equity chart looks bad for six but the gap is **exposure (pred_rate), not skill**; recent-period numbers (2025 calendar + 2026 Q1) actually favor the six-signal model. The bottleneck is the linear-model assumption, not the feature count. Next move per the roadmap: implement `src/lidr_ml/models/lightgbm.py` against the `Model` protocol, add a config that uses it over the same six signals, see whether a nonlinear learner finds anything the logistic regression can't.
 
 <!-- Update this section when work is in progress. Replace with `_Nothing currently in-flight._`
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-27 — Six-signal logistic baseline checkpoint (edge gate stays closed)
+
+Ran `baseline_six_signals.yaml` — same target/model/backtest/costs as `baseline_v1`, only the feature set changed (added rsi, macd, bollinger, breakout, volume to sma_crossover). New row appended to `artifacts/results_log.csv` at `run_id=20260527-120203`. OOS: 2010-12-30 → 2026-04-23, 3,862 days (later start than baseline_v1 because of the 252-day breakout warmup, so only `excess_*` is directly comparable across the two full-window rows). The row was generated *before* the dup-date fix landed (same day, PR #16) so it carries the same ~0.3% double-counting bias as other pre-fix rows — see Gotchas.
+
+**Verdict: edge gate stays closed.** Neither model beats buy-and-hold and neither has positive skill.
+
+**Important reframe.** The initial read was "six features is worse than one feature" (lower accuracy, lower CAGR, lower final equity). That's mechanically true on the full window but **misleading on what the models actually do**:
+
+| | baseline_v1 | baseline_six_signals |
+|---|---|---|
+| `skill_score` (log-loss vs no-skill floor) | -0.0378 | -0.0374 |
+| `mean P(up)` | 0.503 | 0.505 |
+| `pred_rate` (model says up) | 0.753 | 0.595 |
+| `base_rate` (truth = up) | 0.613 | 0.611 |
+
+In probability space the two models are essentially **equally non-skilled** — skill_score differs by 0.0004 over 3,800+ observations (sampling noise). Both are 0.5-spitters; 99% of six's probabilities fall in [0.40, 0.60]. The headline equity gap is **exposure (pred_rate), not skill**: baseline_v1 is long 75% of days vs six's 60%, and in a 14%-CAGR market more exposure compounds harder. The accuracy gap (-4.1 pp) is the same effect — in a market with `base_rate` ≈ 0.61, predicting "up" 75% of the time accidentally matches truth more often than predicting "up" 60% of the time.
+
+**Recent windows favor six.** On 2025 calendar (n=250, same window for both), six **beats v1 decisively** — accuracy 0.548 vs 0.496, skill_score -0.053 vs -0.057, total return +15.2% vs +6.4% (excess vs B&H -3.0 pp vs -11.8 pp). On 2026 Q1 (n=61), six predicts up every day and **exactly matches B&H** (0% excess); v1 takes a few wrong cash days and loses 3.15 pp. baseline_v1's equity curve has long flatlines (cash for months at a time, including the entire post-April-2025 rally) that baseline_six does not.
+
+**Conclusion: the bottleneck is the linear-model assumption, not the feature count.** Adding five orthogonal signals didn't move skill_score and made accuracy *worse* on the full window — but modestly improved recent-period behavior. Next move per the roadmap is LightGBM (now Active Task).
+
+**Workflow lessons worth keeping.**
+- **Don't conflate accuracy with skill when `base_rate` is far from 0.5.** Accuracy of 0.557 sounds OK until you notice base_rate is 0.613 (predict-always-up gets 0.613). `skill_score` (= 1 − log_loss / base_logloss) controls for this; report it next to accuracy whenever both are visible.
+- **When a result is surprising or contradicts a prior, dig before publishing.** Initial PR framing led with "six is worse"; the user pushed back ("Are you sure?"), the diagnostic exposed the pred_rate/skill_score story, the PR was reframed before merge. The reframe was the more interesting finding.
+- **Two charts beat one when the data spans years.** The full-window log chart compresses recent behavior into pixels; a 2024-onwards linear zoom (`docs/_pr_evidence/six_signal_baseline/chart_recent.png` at the time of merge, then removed in cleanup) is where the actual recent behavior is legible.
+- **Aborted bug worth flagging.** The verify script's first version had `prices["Close"]` (capital C). The yfinance loader normalizes columns to lowercase (`loaders.py:77`); the script's fallback `prices.iloc[:, 0]` silently returned the `open` column, producing an equity curve that ended at ~0.6× when results_log said 2.47×. Caught by sanity-checking the chart against the logged final equity. Lesson: chart-vs-log cross-check is a fast first-pass test for any one-off verification script that re-derives metrics.
 
 ### 2026-05-27 — Fix duplicate-boundary-date bug in expanding-window backtest
 
