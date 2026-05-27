@@ -59,6 +59,16 @@ def zigzag_prices(n: int = 30) -> pd.DataFrame:
     return pd.DataFrame({"close": close})
 
 
+def constant_prices(n: int = 60, value: float = 100.0) -> pd.DataFrame:
+    """Return a price DataFrame with all closes equal to ``value``.
+
+    Useful for MACD spot checks: with constant input, every EMA equals
+    ``value`` exactly, so macd_line = signal_line = histogram = 0, and the
+    normalized feature is 0 / value = 0 at every post-warmup index.
+    """
+    return pd.DataFrame({"close": pd.Series([value] * n, dtype=float)})
+
+
 # ---------------------------------------------------------------------------
 # Reference implementations for non-trivial signals.
 # ---------------------------------------------------------------------------
@@ -90,6 +100,42 @@ def _rsi_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
             rsi[k] = 100.0 if al == 0.0 else 100.0 - 100.0 / (1.0 + ag / al)
 
     return pd.Series(rsi, index=prices.index)
+
+
+def _macd_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
+    """Reference MACD — explicit loop-based EMA, no pandas operations inside.
+
+    Structurally different from the signal (which uses pd.Series.ewm). The
+    EMA recurrence transcribed here is byte-equivalent to lidr's TS
+    ``ema()`` function in ``lib/signals/macd.ts``.
+    """
+    fast = params["fast"]
+    slow = params["slow"]
+    signal_p = params["signal"]
+    closes = prices["close"].to_numpy()
+    n = len(closes)
+
+    def ema_loop(values: np.ndarray, period: int) -> np.ndarray:
+        k = 2.0 / (period + 1)
+        out = np.empty(len(values))
+        out[0] = values[0]
+        for i in range(1, len(values)):
+            out[i] = values[i] * k + out[i - 1] * (1.0 - k)
+        return out
+
+    fe = ema_loop(closes, fast)
+    se = ema_loop(closes, slow)
+    macd_line = fe - se
+    sig_line = ema_loop(macd_line, signal_p)
+    hist = macd_line - sig_line
+    feature = hist / se
+
+    warmup = slow + signal_p + 5
+    if n >= warmup:
+        feature[: warmup - 1] = np.nan
+    else:
+        feature[:] = np.nan
+    return pd.Series(feature, index=prices.index)
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +208,27 @@ ACCURACY_CASES = [
             (13, float("nan")),   # last index before seed (period=14 → seed at idx 14)
             (14, 200.0 / 3.0),    # seed: avg_gain=1, avg_loss=0.5, rs=2, rsi=66.6667
             (15, 3000.0 / 43.0),  # first recursion step ≈ 69.7674
+        ],
+    ),
+    (
+        "macd",
+        {"fast": 12, "slow": 26, "signal": 9},
+        _macd_reference,
+        lambda: constant_prices(n=60, value=100.0),
+        # Spot checks on a constant 100.0 series (close = 100 for 60 days).
+        #
+        # With constant input every EMA equals 100 (the seed is also 100, and the
+        # recurrence ema[i] = 100*k + 100*(1-k) = 100 holds for all i). So
+        # macd_line = 0, signal_line = 0, histogram = 0, normalized = 0/100 = 0
+        # at every index — but the signal NaN-masks the first warmup-1 entries
+        # to mirror lidr's TS minLen check.
+        #
+        # warmup = slow + signal + 5 = 26 + 9 + 5 = 40, so first valid index = 39.
+        [
+            (38, float("nan")),   # last NaN before warmup boundary
+            (39, 0.0),            # first valid post-warmup value
+            (45, 0.0),            # well past warmup, still 0 on constant input
+            (59, 0.0),            # last index
         ],
     ),
 ]
