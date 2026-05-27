@@ -98,6 +98,10 @@ tests/
   test_signal_accuracy.py element-wise signal correctness + spot checks on arithmetic series
   test_strategy_returns.py guards the equity-curve return rule (1-day-forward, costs charged)
   test_pipeline_smoke.py  runs dev_synthetic config end-to-end
+docs/
+  signals.md              first-time-reader explainer for all six registered signals
+  signals/                per-signal PNG charts embedded by signals.md (SPY, full history)
+  sample-report/report.html committed sample of the HTML backtest report
 .github/workflows/
   test.yml                CI: `make test` + `make lint` on every push / PR
 ```
@@ -171,6 +175,20 @@ All five signal ports shipped 2026-05-27 (see Recent Changes) — the pipeline n
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-27 — Signals explainer doc (PR #13)
+
+Shipped a standalone first-time-reader explainer for the six implemented signals at [`docs/signals.md`](docs/signals.md), with per-signal charts in `docs/signals/`. Closes the gap that the in-code docstrings explained *how* each signal is computed but nothing told a casual reader *why it exists* or *how to read it*. README's "What's in the box" line — which had drifted to "One ported signal: SMA crossover" — also updated to reflect all six and link the new doc.
+
+**Per-signal template** (apply this when adding a future signal — keeps the doc internally consistent): *What it watches* (plain English) → *What the number means* (directional reading: high=BUY or high=SELL, with the trend-following / mean-reversion / conviction family called out) → *How it's calculated* (math table) → *Chart on SPY* → *What you'd have seen in recent history* (3–4 named events) → *When this signal works well, and when it doesn't* (two concrete failure modes) → *Parameters used here* (and *why* — convention vs. real justification).
+
+**Format choices worth remembering.**
+- **One combined markdown file**, not per-signal files. Lets a reader compare signals side-by-side and Ctrl-F across all of them; a TOC at the top handles navigation. README would have bloated past usability if these landed there instead.
+- **Chart-generation pattern**: write a throwaway top-level `_gen_signal_docs_charts.py` that calls each signal on the cached `data/raw/SPY_*.pkl`, writes PNGs into `docs/signals/`, then delete the script. Commit the outputs, not the generator. Same spirit as the PR-evidence pattern from PRs #5-#10 — review/regeneration artifacts don't live in `main`.
+- **Charts use the full 2005–2026 history on a log-scale price panel**, so 2008 GFC, 2020 COVID, 2022 bear, and 2025 tariff plunge are all simultaneously visible. Use HTML `<img>` tags with `width="100%"` (not bare `![]()`) so charts embed inline in every markdown renderer, not just GitHub.
+- **Trend-following vs mean-reversion vs conviction framing** lives in the intro and is repeated per-signal. A first-time reader's biggest landmine is assuming "high feature value = bullish" universally — false for RSI and Bollinger, undefined for volume. The grouping table at the top neutralises that misconception before they hit any signal section.
+
+**Cross-signal April 2025 callout.** The doc's closing section reuses the April 2025 plunge as a sanity check: five oscillator signals all flagged the same week as their most extreme reading; SMA crossover (a long-window trend indicator) didn't register the move for another five weeks. The contrast is intuition for why a model benefits from multiple signals at all. Computed signal readings on the plunge day (April 4/7/8, 2025) are quoted from a one-off run of the chart-generator script and are not stored anywhere in the repo — if the doc is ever updated, recompute rather than trusting the embedded numbers.
 
 ### 2026-05-27 — Five lidr signals ported + PR-evidence convention (Next Up #3 done)
 
