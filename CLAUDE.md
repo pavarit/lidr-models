@@ -145,6 +145,7 @@ Non-obvious things that bit us. Each entry earned its place by causing a real pr
 - **Typer collapses single-command apps into a flat CLI.** Removing `list-signals` from `cli.py` would silently break `python -m lidr_ml backtest <config>` (Typer would re-flatten the entry point). Don't remove `list-signals` until a third real command lands.
 - **`yfinance` only has currently-listed tickers** — survivorship bias. Fine for SPY/QQQ/sector ETFs; suspicious for individual-name backtests. Don't trust individual-stock results without a CRSP-style source.
 - **`class_weight="balanced"` in the baseline distorts `predict_proba` away from true frequencies.** Fine for the up/down decision the backtest evaluates; not OK to ship to lidr as a calibrated probability. Revisit `class_weight` and add an explicit Platt/isotonic calibration step before any prediction artifact is consumed by lidr (on the roadmap as the calibration item).
+- **`artifacts/results_log.csv` rows from before 2026-05-27 are slightly off.** The expanding-window backtester used an inclusive right endpoint on the test slice, so the boundary date between split N and split N+1 (`test_end` of N == `test_start` of N+1) was predicted twice and double-compounded in the equity curve. ~0.3% of rows affected; tiny effect on every metric (`accuracy`, `log_loss`, `skill_score`, `cagr`, `sharpe`, `n_oos`). Fixed by making the right endpoint exclusive except on the final split — see `backtest/engine.py::expanding_window_backtest` and `tests/test_backtest_engine.py`. Pre-fix rows weren't re-run; treat any cross-row comparison that straddles 2026-05-27 with this in mind.
 
 ## Next Up
 
@@ -175,6 +176,14 @@ All five signal ports shipped 2026-05-27 (see Recent Changes) — the pipeline n
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-27 — Fix duplicate-boundary-date bug in expanding-window backtest
+
+Caught while diagnosing the six-signal checkpoint: `backtest/engine.py::expanding_window_backtest` had `test_mask = (idx >= test_start) & (idx <= test_end)` and set `train_end = test_end` at the bottom of the loop. So the boundary date between split N and split N+1 (the actual idx date equal to `test_end_N == test_start_{N+1}`) was predicted in **both** splits' output slices. Visible in the committed prediction JSONs as duplicate dates at ~annual cadence — baseline_v1 had 12 dups out of 3,914, baseline_six had 11 out of 3,862 (~0.3%).
+
+**Fix.** Right endpoint of the test slice is now exclusive except on the final split (so the last data point still gets predicted). New regression tests in `tests/test_backtest_engine.py`: `test_predictions_index_is_unique` and `test_consecutive_splits_do_not_overlap`. Both fail against the pre-fix engine — verified by stashing the fix and re-running. Engine also now raises `AssertionError` if `pd.concat(preds)` ends up with a non-unique index, so the bug can't silently reappear.
+
+**Caveat noted in Gotchas.** All `artifacts/results_log.csv` rows from before this commit are very slightly off (accuracy, log_loss, skill_score, CAGR, Sharpe, n_oos all touched by the ~0.3% double-counted days). Didn't re-run the headline configs in this PR — the effect is below the noise floor for any conclusion drawn from those rows so far, and re-running requires yfinance. Future cross-row comparisons that straddle 2026-05-27 should be aware of this.
 
 ### 2026-05-27 — Signals explainer doc (PR #13)
 
