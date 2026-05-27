@@ -27,6 +27,7 @@ SIGNAL_CASES = [
     ("rsi", {"period": 14}),
     ("macd", {"fast": 12, "slow": 26, "signal": 9}),
     ("bollinger", {"period": 20}),
+    ("breakout", {"period": 20}),
 ]
 
 
