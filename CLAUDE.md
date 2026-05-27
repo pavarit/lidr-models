@@ -146,6 +146,7 @@ Non-obvious things that bit us. Each entry earned its place by causing a real pr
 - **Typer collapses single-command apps into a flat CLI.** Removing `list-signals` from `cli.py` would silently break `python -m lidr_ml backtest <config>` (Typer would re-flatten the entry point). Don't remove `list-signals` until a third real command lands.
 - **`yfinance` only has currently-listed tickers** — survivorship bias. Fine for SPY/QQQ/sector ETFs; suspicious for individual-name backtests. Don't trust individual-stock results without a CRSP-style source.
 - **`class_weight="balanced"` in the baseline distorts `predict_proba` away from true frequencies.** Fine for the up/down decision the backtest evaluates; not OK to ship to lidr as a calibrated probability. Revisit `class_weight` and add an explicit Platt/isotonic calibration step before any prediction artifact is consumed by lidr (on the roadmap as the calibration item).
+- **`artifacts/results_log.csv` rows from before 2026-05-27 are slightly off.** The expanding-window backtester used an inclusive right endpoint on the test slice, so the boundary date between split N and split N+1 (`test_end` of N == `test_start` of N+1) was predicted twice and double-compounded in the equity curve. ~0.3% of rows affected; tiny effect on every metric (`accuracy`, `log_loss`, `skill_score`, `cagr`, `sharpe`, `n_oos`). Fixed by making the right endpoint exclusive except on the final split — see `backtest/engine.py::expanding_window_backtest` and `tests/test_backtest_engine.py`. Pre-fix rows weren't re-run; treat any cross-row comparison that straddles 2026-05-27 with this in mind.
 
 ## Next Up
 
@@ -168,7 +169,7 @@ Cross-references to Next Up items use names, not numbers — see Maintenance Ins
 
 ## Active Task
 
-**LightGBM as second base learner (Next Up: LightGBM).** The six-feature logistic checkpoint ran 2026-05-27 (see Recent Changes) and lost to buy-and-hold by every metric except max drawdown — `excess_cagr = -7.9%`, `skill_score = -0.038`, accuracy 0.515 below the 0.60 base rate. So the bottleneck isn't the feature count, it's the linear-model assumption. Next move per the roadmap: implement `src/lidr_ml/models/lightgbm.py` against the `Model` protocol, add a config that uses it over the same six signals, see whether a nonlinear learner finds anything the logistic regression can't.
+**LightGBM as second base learner (Next Up: LightGBM).** The six-feature logistic checkpoint ran 2026-05-27 (see Recent Changes) and finished essentially **tied** with the single-signal baseline in probability space — both score `skill_score ≈ -0.038` (within noise of each other; both anti-informative vs the no-skill floor). Neither beats buy-and-hold on the full 15-year OOS window. The full-window equity chart looks bad for six but the gap is **exposure (pred_rate), not skill**; recent-period numbers (2025 calendar + 2026 Q1) actually favor the six-signal model. The bottleneck is the linear-model assumption, not the feature count. Next move per the roadmap: implement `src/lidr_ml/models/lightgbm.py` against the `Model` protocol, add a config that uses it over the same six signals, see whether a nonlinear learner finds anything the logistic regression can't.
 
 <!-- Update this section when work is in progress. Replace with `_Nothing currently in-flight._`
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
@@ -177,23 +178,38 @@ Cross-references to Next Up items use names, not numbers — see Maintenance Ins
 
 ### 2026-05-27 — Six-signal logistic baseline checkpoint (edge gate stays closed)
 
-Ran `baseline_six_signals.yaml` — same target/model/backtest/costs as `baseline_v1`, only the feature set changed (added rsi, macd, bollinger, breakout, volume to sma_crossover). New row appended to `artifacts/results_log.csv` at `run_id=20260527-120203`. OOS: 2010-12-30 → 2026-04-23, 3,862 days (later start than baseline_v1 because of the 252-day breakout warmup — therefore only `excess_*` is directly comparable across the two rows).
+Ran `baseline_six_signals.yaml` — same target/model/backtest/costs as `baseline_v1`, only the feature set changed (added rsi, macd, bollinger, breakout, volume to sma_crossover). New row appended to `artifacts/results_log.csv` at `run_id=20260527-120203`. OOS: 2010-12-30 → 2026-04-23, 3,862 days (later start than baseline_v1 because of the 252-day breakout warmup, so only `excess_*` is directly comparable across the two full-window rows). The row was generated *before* the dup-date fix landed (same day, PR #16) so it carries the same ~0.3% double-counting bias as other pre-fix rows — see Gotchas.
 
-**Verdict: no edge.** Six features lose to buy-and-hold by every metric except max drawdown, and slightly underperform even the single-signal floor on equity terms.
+**Verdict: edge gate stays closed.** Neither model beats buy-and-hold and neither has positive skill.
 
-| Metric | baseline_v1 | baseline_six_signals | Δ |
-|---|---|---|---|
-| skill_score | -0.0380 | -0.0376 | +0.0004 (noise) |
-| accuracy | 0.556 | 0.515 | -0.041 (and well below 0.60 base rate) |
-| strategy CAGR | 7.96% | 6.07% | -1.89 pp |
-| strategy Sharpe | 0.666 | 0.582 | -0.08 |
-| strategy max DD | -33.7% | -22.9% | +10.8 pp (shallower) |
-| strategy final equity | 3.28× | 2.47× | -0.81× |
-| excess CAGR vs B&H | -6.6% | -7.9% | -1.3 pp |
+**Important reframe.** The initial read was "six features is worse than one feature" (lower accuracy, lower CAGR, lower final equity). That's mechanically true on the full window but **misleading on what the models actually do**:
 
-The one bright spot is max drawdown: the six-feature model is in cash more often during deep selloffs. That's not edge but it is directional information. **The bottleneck is the linear-model assumption, not the feature count** — adding five orthogonal signals didn't move skill_score and made accuracy *worse*. Next move per the roadmap is LightGBM (now Active Task).
+| | baseline_v1 | baseline_six_signals |
+|---|---|---|
+| `skill_score` (log-loss vs no-skill floor) | -0.0378 | -0.0374 |
+| `mean P(up)` | 0.503 | 0.505 |
+| `pred_rate` (model says up) | 0.753 | 0.595 |
+| `base_rate` (truth = up) | 0.613 | 0.611 |
 
-**Aborted-bug worth flagging.** The first version of `scripts/verify_six_signal_baseline.py` had `prices["Close"]` (capital C). The yfinance loader normalizes columns to lowercase (`loaders.py:77`); the script's fallback `prices.iloc[:, 0]` silently returned the `open` column, producing an equity curve that ended at ~0.6× when results_log said 2.47×. Caught by sanity-checking the chart against the logged final equity. Lesson: chart-vs-log cross-check is a fast first-pass test for any one-off verification script that re-derives metrics from the predictions JSON.
+In probability space the two models are essentially **equally non-skilled** — skill_score differs by 0.0004 over 3,800+ observations (sampling noise). Both are 0.5-spitters; 99% of six's probabilities fall in [0.40, 0.60]. The headline equity gap is **exposure (pred_rate), not skill**: baseline_v1 is long 75% of days vs six's 60%, and in a 14%-CAGR market more exposure compounds harder. The accuracy gap (-4.1 pp) is the same effect — in a market with `base_rate` ≈ 0.61, predicting "up" 75% of the time accidentally matches truth more often than predicting "up" 60% of the time.
+
+**Recent windows favor six.** On 2025 calendar (n=250, same window for both), six **beats v1 decisively** — accuracy 0.548 vs 0.496, skill_score -0.053 vs -0.057, total return +15.2% vs +6.4% (excess vs B&H -3.0 pp vs -11.8 pp). On 2026 Q1 (n=61), six predicts up every day and **exactly matches B&H** (0% excess); v1 takes a few wrong cash days and loses 3.15 pp. baseline_v1's equity curve has long flatlines (cash for months at a time, including the entire post-April-2025 rally) that baseline_six does not.
+
+**Conclusion: the bottleneck is the linear-model assumption, not the feature count.** Adding five orthogonal signals didn't move skill_score and made accuracy *worse* on the full window — but modestly improved recent-period behavior. Next move per the roadmap is LightGBM (now Active Task).
+
+**Workflow lessons worth keeping.**
+- **Don't conflate accuracy with skill when `base_rate` is far from 0.5.** Accuracy of 0.557 sounds OK until you notice base_rate is 0.613 (predict-always-up gets 0.613). `skill_score` (= 1 − log_loss / base_logloss) controls for this; report it next to accuracy whenever both are visible.
+- **When a result is surprising or contradicts a prior, dig before publishing.** Initial PR framing led with "six is worse"; the user pushed back ("Are you sure?"), the diagnostic exposed the pred_rate/skill_score story, the PR was reframed before merge. The reframe was the more interesting finding.
+- **Two charts beat one when the data spans years.** The full-window log chart compresses recent behavior into pixels; a 2024-onwards linear zoom (`docs/_pr_evidence/six_signal_baseline/chart_recent.png` at the time of merge, then removed in cleanup) is where the actual recent behavior is legible.
+- **Aborted bug worth flagging.** The verify script's first version had `prices["Close"]` (capital C). The yfinance loader normalizes columns to lowercase (`loaders.py:77`); the script's fallback `prices.iloc[:, 0]` silently returned the `open` column, producing an equity curve that ended at ~0.6× when results_log said 2.47×. Caught by sanity-checking the chart against the logged final equity. Lesson: chart-vs-log cross-check is a fast first-pass test for any one-off verification script that re-derives metrics.
+
+### 2026-05-27 — Fix duplicate-boundary-date bug in expanding-window backtest
+
+Caught while diagnosing the six-signal checkpoint: `backtest/engine.py::expanding_window_backtest` had `test_mask = (idx >= test_start) & (idx <= test_end)` and set `train_end = test_end` at the bottom of the loop. So the boundary date between split N and split N+1 (the actual idx date equal to `test_end_N == test_start_{N+1}`) was predicted in **both** splits' output slices. Visible in the committed prediction JSONs as duplicate dates at ~annual cadence — baseline_v1 had 12 dups out of 3,914, baseline_six had 11 out of 3,862 (~0.3%).
+
+**Fix.** Right endpoint of the test slice is now exclusive except on the final split (so the last data point still gets predicted). New regression tests in `tests/test_backtest_engine.py`: `test_predictions_index_is_unique` and `test_consecutive_splits_do_not_overlap`. Both fail against the pre-fix engine — verified by stashing the fix and re-running. Engine also now raises `AssertionError` if `pd.concat(preds)` ends up with a non-unique index, so the bug can't silently reappear.
+
+**Caveat noted in Gotchas.** All `artifacts/results_log.csv` rows from before this commit are very slightly off (accuracy, log_loss, skill_score, CAGR, Sharpe, n_oos all touched by the ~0.3% double-counted days). Didn't re-run the headline configs in this PR — the effect is below the noise floor for any conclusion drawn from those rows so far, and re-running requires yfinance. Future cross-row comparisons that straddle 2026-05-27 should be aware of this.
 
 ### 2026-05-27 — Signals explainer doc (PR #13)
 

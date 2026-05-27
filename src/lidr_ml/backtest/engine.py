@@ -57,8 +57,15 @@ def expanding_window_backtest(
         if test_end > idx[-1]:
             test_end = idx[-1]
 
+        # Splits are half-open on the right so the boundary date (test_end of
+        # split N = test_start of split N+1, since train_end is set to test_end
+        # at the bottom of the loop) doesn't get predicted in both splits.
+        is_last_split = test_end == idx[-1]
         train_mask = idx < train_end
-        test_mask = (idx >= test_start) & (idx <= test_end)
+        if is_last_split:
+            test_mask = (idx >= test_start) & (idx <= test_end)
+        else:
+            test_mask = (idx >= test_start) & (idx < test_end)
 
         if train_mask.sum() < 10 or test_mask.sum() < 1:
             train_end = test_end
@@ -90,7 +97,14 @@ def expanding_window_backtest(
     if not preds:
         raise RuntimeError("No splits produced predictions — check config sizing.")
 
-    return BacktestResult(predictions=pd.concat(preds).sort_index(), splits=splits)
+    stitched = pd.concat(preds).sort_index()
+    if not stitched.index.is_unique:
+        dups = stitched.index[stitched.index.duplicated()].unique().tolist()
+        raise AssertionError(
+            f"Backtest produced overlapping predictions on {len(dups)} dates; "
+            f"first few: {dups[:5]}"
+        )
+    return BacktestResult(predictions=stitched, splits=splits)
 
 
 def add_strategy_returns(
