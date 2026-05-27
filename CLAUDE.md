@@ -24,6 +24,7 @@ Integration is via a JSON file (`artifacts/predictions/<config>-<timestamp>.json
 - **Python** ≥ 3.10
 - **pandas / numpy** — data manipulation
 - **scikit-learn** — base learners + walk-forward CV (`TimeSeriesSplit`)
+- **LightGBM** — second base learner (added 2026-05-27, [PR #20](https://github.com/pavarit/lidr-ml/pull/20))
 - **yfinance** — free historical price data (with synthetic-data fallback for offline dev)
 - **PyYAML** — config files
 - **Typer** — CLI
@@ -31,7 +32,7 @@ Integration is via a JSON file (`artifacts/predictions/<config>-<timestamp>.json
 - **pytest** — tests
 - **ruff** — lint + format
 
-Planned but not yet added: **LightGBM** (next base learner on the roadmap), **MLflow** (experiment tracking — on the roadmap but deferred behind the CSV results log), **vectorbt** (faster backtest sweeps — not yet on the roadmap; revisit if the custom engine becomes the bottleneck).
+Planned but not yet added: **MLflow** (experiment tracking — on the roadmap but deferred behind the CSV results log), **vectorbt** (faster backtest sweeps — not yet on the roadmap; revisit if the custom engine becomes the bottleneck).
 
 ## Commands
 
@@ -46,7 +47,7 @@ Reading top-down:
 3. **Signals** (`src/lidr_ml/signals/`) — each signal is a pure function that takes a DataFrame of prices and returns a Series of feature values aligned to the price index. Every signal must be **lookahead-safe** (only uses data up to time *t* to compute the value at time *t*). Tested in `tests/test_no_lookahead.py`.
 4. **Target** (computed inline in `src/lidr_ml/pipeline.py::run_pipeline`) — for now, binary: was the *N*-day forward return positive? Will become 3-class (BUY/HOLD/SELL) once we have a useful model.
 5. **Backtest engine** (`src/lidr_ml/backtest/engine.py`) — expanding-window walk-forward. For each split: fit model on train slice, predict on test slice, store predictions. Never trains on data after the test period.
-6. **Model** (`src/lidr_ml/models/`) — pluggable. Today: logistic regression. Next: LightGBM, then a stacking meta-learner over both.
+6. **Model** (`src/lidr_ml/models/`) — pluggable. Today: logistic regression and LightGBM. As of 2026-05-27, both have been backtested on the six-signal feature set against the 5d-forward-return-sign target; neither beats the no-skill baseline (see Recent Changes). The roadmap is currently pivoting to target/feature reformulation rather than more model classes.
 7. **Eval + report** (`src/lidr_ml/eval/`) — classification metrics (`classification_metrics` → `accuracy`, `base_rate`, `pred_rate`, `log_loss`, `base_logloss`, `n_obs`), strategy metrics (`strategy_metrics` → `cagr`, `sharpe`, `max_drawdown`, `final_equity`), and per-year breakdowns (`by_year` reports the classification fields per calendar year; `performance_by_year` reports strategy vs buy-and-hold returns and the excess). `base_rate` and `pred_rate` are deliberately shown beside `accuracy` — without them, an accuracy of 0.55 looks fine until you notice the base rate is 0.61. The equity curve itself is built in `backtest/engine.py::add_strategy_returns` ("go long when prediction = 1, cash otherwise"). HTML report written to `reports/<config>-<timestamp>/`. The report shows a **Strategy vs Buy & Hold** comparison table (CAGR, Sharpe, max drawdown, final equity for both legs) and a **per-year performance** table (strategy vs buy-hold return + excess) so regime-dependence is visible. A **Summary** section at the top translates the config into English and states the out-of-sample span (derived from the predictions, not the raw data range). Both the top classification metrics and the per-year table show **base_logloss** (the no-skill floor = entropy of the base rate) beside log loss, and the comparison/per-year tables green/red-highlight whichever side wins. The equity curve is marked to market with **1-day-forward returns**, not the N-day classification target — see Gotchas.
 8. **Cross-run results log** (`src/lidr_ml/eval/results_log.py`) — `append_run()` appends one row per backtest to `artifacts/results_log.csv` (skill score, full-OOS + per-period log loss with base-rate floors, strategy vs benchmark CAGR/Sharpe/max-drawdown, excess) so "did this change help?" is answerable without opening every HTML report. Opt out per-config with `output.results_log: false`; defaults to true. `configs/dev_synthetic.yaml` sets it false so the smoke test (run on every push/PR) doesn't pollute the tracked CSV with synthetic rows — `tests/test_pipeline_smoke.py` asserts the file size doesn't grow.
 
@@ -150,33 +151,72 @@ Non-obvious things that bit us. Each entry earned its place by causing a real pr
 
 ## Next Up
 
-Priority order, framed around a single near-term goal: **prove the model has an edge over buy-and-hold** before building any serving/integration plumbing. The SPY baseline currently shows no edge (see Active Task), so the path below is improve-the-model first. Everything past #3 (Add regime features) is explicitly gated on an edge actually appearing.
+Priority order, framed around a single near-term goal: **prove the model has an edge over buy-and-hold** before building any serving/integration plumbing. As of 2026-05-27, neither logistic nor LightGBM beats no-skill on the six TA signals → 5d-forward-return-sign target (see Recent Changes → LightGBM checkpoint). The diagnostic finding was that the model class is *not* the bottleneck — three independent well-behaved configs (unweighted logistic, tiny LightGBM, calibrated LightGBM) all cluster at the no-skill floor. So the next move is to attack the target/feature setup, not try more models.
 
 Cross-references to Next Up items use names, not numbers — see Maintenance Instructions for why. Completed items are removed from this section and live in Recent Changes instead.
 
-1. **Add LightGBM as a second base learner.** Drop-in: implement `models/lightgbm.py` against the same `Model` protocol, add a config that uses it. *A nonlinear learner over six signals is the most likely place an edge first appears.*
-2. **Introduce stacking.** Once two base learners exist, add a `StackedModel` whose `fit` trains the base learners via out-of-fold predictions and then trains a meta-learner (logistic regression) on top.
-3. **Add regime features.** VIX level, yield-curve slope, 60-day realized vol. Fed into the meta-learner so it can lean on different base models in different environments.
+1. **Reformulate the target or features.** The LightGBM result confirmed the bottleneck is here, not in model capacity. Three concrete directions, ordered roughly by cost-to-test:
+   - **(a) Longer prediction horizon** (5d → 20d). Cheapest: change `target.horizon_days` in a config. The 5-day-sign target is extremely noisy — most weekly moves are noise. A monthly horizon should have a higher signal-to-noise ratio, and the existing TA signals (RSI, MACD, Bollinger) are arguably better matched to weekly/monthly motion than daily.
+   - **(b) Return-magnitude regression target** instead of binary sign. Larger change: requires a new target type in `pipeline.py`, a regressor instead of a classifier, and rethinking `Model` protocol return shape. Lets the model express *how confident* and *how much*, which carries more information than sign alone.
+   - **(c) Regime features.** VIX level, yield-curve slope, 60-day realized vol. New feature axes that don't overlap with the six TA signals. Needs multi-ticker support (`^VIX`, `^TNX`) wired into the data loader; partly implementable but not yet exercised.
+2. **Introduce stacking.** Once two base learners exist *with non-zero skill*, add a `StackedModel` whose `fit` trains the base learners via out-of-fold predictions and then trains a meta-learner (logistic regression) on top. **Currently parked** — neither logistic nor LightGBM has skill, so a stacker over them inherits no signal. Revisit after item #1 produces a config that clears the no-skill floor.
 
 — Edge gate: items below stay parked until something above beats buy-and-hold. —
 
-4. **Add a final-model fit + serialize step.** The backtest only evaluates (throwaway per-split models); nothing fits a model on all data or writes `artifacts/models/`. Before serving live predictions, fit one model on all available history, serialize it, and write the prediction artifact. Trigger: once a model beats buy-and-hold.
-5. **Calibrate `predict_proba` via Platt or isotonic regression.** The baseline's `class_weight="balanced"` distorts probabilities away from true frequencies (see Gotchas) — fine for the up/down decision the backtest evaluates, not OK to ship to lidr as a calibrated probability. Switch to `class_weight=None` plus a calibration wrapper before any prediction artifact is consumed by lidr.
-6. **Migrate the output from binary to 3-class (BUY / HOLD / SELL).** Today's target is binary (`fwd_return > 0`). The project's stated deliverable is 3-class. Two paths: (a) post-hoc bucketing of the calibrated probability into BUY / HOLD / SELL bands, (b) reformulate the target itself (e.g., three quantile bins of `fwd_return`). Decision punt until a binary model with edge exists; the 3-class formulation changes how "beats buy-and-hold" is measured.
-7. **Evolve the artifact JSON schema as lidr's needs firm up.** Schema is already implemented at `schema_version: 1` (see `pipeline.py:174-189`: `config_name`, `ticker`, `generated_at`, `metrics.{classification,strategy,benchmark}`, `predictions[].{date,y_true,y_pred,probability_up}`). Bump the version when lidr's `/api/signals/[ticker]` is ready to consume it and any fields need to change (per-signal contributions, BUY/HOLD/SELL class labels from the 3-class migration, etc.).
-8. **Wire lidr's `/api/signals/[ticker]` to read the artifact.** That's the bridge moment. Coordinate with the lidr CLAUDE.md.
-9. **Wire up MLflow for experiment tracking.** Replace the timestamped-folder report + CSV log with proper logged runs and a comparison UI. *Deferred: the existing `artifacts/results_log.csv` covers the "did this help?" need until the run count is large enough to justify the heavier tooling.*
+3. **Add a final-model fit + serialize step.** The backtest only evaluates (throwaway per-split models); nothing fits a model on all data or writes `artifacts/models/`. Before serving live predictions, fit one model on all available history, serialize it, and write the prediction artifact. Trigger: once a model beats buy-and-hold.
+4. **Calibrate `predict_proba` via Platt or isotonic regression.** *Empirically validated as a needed step by the LightGBM PR diagnostics (2026-05-27):* wrapping LightGBM in `CalibratedClassifierCV(isotonic, cv=3)` moved its skill_score from -0.148 to -0.004. Raw LightGBM probabilities are confidently miscalibrated; calibration is required before any probability artifact ships to lidr. Logistic regression's `predict_proba` is closer to calibrated out of the box but should also be wrapped for consistency.
+5. **Migrate the output from binary to 3-class (BUY / HOLD / SELL).** Today's target is binary (`fwd_return > 0`). The project's stated deliverable is 3-class. Two paths: (a) post-hoc bucketing of the calibrated probability into BUY / HOLD / SELL bands, (b) reformulate the target itself (e.g., three quantile bins of `fwd_return`). Decision punt until a binary model with edge exists; the 3-class formulation changes how "beats buy-and-hold" is measured.
+6. **Evolve the artifact JSON schema as lidr's needs firm up.** Schema is already implemented at `schema_version: 1` (see `pipeline.py:174-189`: `config_name`, `ticker`, `generated_at`, `metrics.{classification,strategy,benchmark}`, `predictions[].{date,y_true,y_pred,probability_up}`). Bump the version when lidr's `/api/signals/[ticker]` is ready to consume it and any fields need to change (per-signal contributions, BUY/HOLD/SELL class labels from the 3-class migration, etc.).
+7. **Wire lidr's `/api/signals/[ticker]` to read the artifact.** That's the bridge moment. Coordinate with the lidr CLAUDE.md.
+8. **Wire up MLflow for experiment tracking.** Replace the timestamped-folder report + CSV log with proper logged runs and a comparison UI. *Deferred: the existing `artifacts/results_log.csv` covers the "did this help?" need until the run count is large enough to justify the heavier tooling.*
 
 ## Active Task
 
 _Nothing currently in-flight._
 
-Primed for next session: **LightGBM (Next Up #1).** Context is in Recent Changes (six-signal checkpoint + class_weight sanity check, both 2026-05-27): the bottleneck is confirmed to be the linear-model assumption — both logistic configurations produce ~constant-predictor P(up) distributions. LightGBM is the test of "do nonlinear interactions across these six features carry signal?" Concrete starting points: (1) add `lightgbm` to `pyproject.toml` deps (currently flagged "planned but not yet added" in Stack); (2) implement `src/lidr_ml/models/lightgbm.py` against the `Model` protocol (mirror `models/logistic.py`); (3) clone `configs/baseline_six_signals_unweighted.yaml` → `baseline_six_signals_lightgbm.yaml` with `model.type: lightgbm` and `class_weight=None`; (4) backtest, compare P(up) histogram width vs the logistic spikes. PR with the chart as evidence per convention.
+Primed for next session: **Target/feature reformulation (Next Up #1).** Pick one of three directions; recommendation is **(a) longer horizon first** because it's the cheapest to test and most directly answers "is the 5d-sign target too noisy?" If it doesn't move skill_score, that's evidence the bottleneck is feature-side (in which case (c) regime features is the next try). If it does move skill_score, that retargets the rest of the roadmap around magnitudes/horizons rather than sign.
+
+- **(a) Longer horizon (recommended first).** Clone `configs/baseline_six_signals_unweighted.yaml` → `baseline_six_signals_20d_unweighted.yaml` with `target.horizon_days: 20`. Also clone the LightGBM config the same way. Backtest both. The chart to make is **skill_score vs horizon** for both model classes (1d, 5d, 10d, 20d, 60d) — would settle whether the bottleneck is "target horizon too noisy" cleanly.
+- **(b) Return-magnitude regression.** Bigger lift. New `target.type: forward_return_regression`, new regressor wrapper (`models/lightgbm_regressor.py` or sklearn's `Ridge`), revised `Model` protocol or a sibling `RegressionModel` protocol, and a different evaluation path (RMSE / R² in place of accuracy / log_loss). The strategy rule itself becomes a question: long when predicted return > threshold? Long-short? Worth doing only if (a) shows promise — regression on a still-noisy target is doubly hard.
+- **(c) Regime features.** Add VIX (`^VIX`), 10y yield (`^TNX`), realized vol. Requires extending `data/loaders.py` to fetch additional tickers and align them to the SPY index. Adds 3 features without changing the target. Conceptually most likely to add information; mechanically biggest change to the data layer.
+
+Concrete first step (if pursuing (a)): in a new branch, write `configs/baseline_six_signals_20d_unweighted.yaml` and `configs/baseline_six_signals_20d_lightgbm.yaml`, run both, append rows to results_log.csv, plot skill_score and per-period strategy returns for the 4 configs (5d-vs-20d × 2 models). PR with the chart + per-period table as evidence per the outcome-changing-PR convention.
 
 <!-- Update this section when work is in progress. Replace with `_Nothing currently in-flight._`
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-27 — LightGBM checkpoint: still no edge, and the model class is not the bottleneck
+
+Shipped LightGBM as the second base learner ([PR #20](https://github.com/pavarit/lidr-ml/pull/20), commit `c4f0044`). New module `src/lidr_ml/models/lightgbm.py`, registered as `"lightgbm"` in the model registry, configured via `configs/baseline_six_signals_lightgbm.yaml` (identical to `baseline_six_signals_unweighted.yaml` except `model.type`). Conservative defaults: `n_estimators=200`, `learning_rate=0.05`, `num_leaves=31`, `min_child_samples=20`. New row in `artifacts/results_log.csv` at `run_id=20260527-143507`.
+
+**Headline: LightGBM is worse than logistic on this problem.** `skill_score = -0.1478` vs the unweighted logistic's -0.005. Strategy CAGR 9.3% vs B&H 14.0%.
+
+**The diagnostics reframed the headline.** Wrapping LightGBM in `CalibratedClassifierCV(method='isotonic', cv=3)` moves skill_score from -0.148 to -0.004 — back to the no-skill floor. So LightGBM's raw predictions aren't anti-informative, they're badly miscalibrated. **The calibration step in Next Up is now empirically validated as needed** before any prediction artifact ships to lidr (was previously a theoretical concern; now there's a 0.14-point skill_score delta backing it up).
+
+**The deeper finding strengthened.** Three independent well-behaved configs converge on the same answer:
+
+| config | skill_score |
+| --- | --- |
+| six_signals_unweighted (logistic) | -0.005 |
+| LightGBM tiny (4 leaves, 20 trees, min_child=200) | -0.007 |
+| LightGBM default + isotonic calibration | -0.004 |
+
+When given enough freedom *and* calibrated probabilities, the model learns to predict the prior. There's no day-to-day signal in these six features against the 5-day-forward-return-sign target. **The bottleneck is the features/target, not the model class.** Roadmap pivoted: Next Up #1 was "LightGBM" (this entry replaces it); the new #1 is target/feature reformulation. Stacking (was #2) is parked under the edge gate — a stacker over two no-skill base learners inherits no signal.
+
+**Diagnostic checks worth keeping in mind for future PRs.**
+1. **Column-order spot check** (`classes_ = [0,1]` + in-sample P(class=1) higher on up-days than down-days) — cheap rule-out for "are we silently reading P(down) as P(up)?". Trivially passes for sklearn-conforming models but takes 5 lines to verify; the cost of skipping is silent inversion of every conclusion.
+2. **In-sample fit check** — accuracy on the model's own training data must be meaningfully above base rate, else the model isn't fitting at all and the OOS collapse is a fit failure not a generalization failure.
+3. **Seed-stability sweep** — for LightGBM with default settings, this is *trivial* (all seeds bit-identical) because `feature_fraction = bagging_fraction = 1.0` means there's no randomness consuming `random_state`. To get real seed-stability evidence need to enable subsampling first. Hyperparameter sweep is the stronger robustness check.
+4. **Hyperparameter sensitivity** — for a low-SNR problem, expect monotonic behavior in capacity: tiny config → no-skill floor; default → confidently wrong; large → even more confidently wrong. If the relationship isn't monotonic, the result is hyperparameter-noisy.
+5. **Calibration wrapper** — for any tree ensemble producing `predict_proba`, run with and without `CalibratedClassifierCV`. The delta is large; without it, log-loss-based conclusions about "the model fits noise" are conflated with "the model has miscalibrated probabilities."
+
+**Per-period breakdown surfaced a regime story the full-window aggregate hides.** LightGBM is the *worst* strategy in 2024 (+14% vs B&H +26%) but the *best* in 2025 (+22% vs +17%) and Q1 2026 (+0.0% vs -4.5%). Per-period skill_score confirms it's not skill — Q1 2026 LightGBM (-0.192) is essentially tied with unweighted logistic (-0.194). LightGBM has a structural bias toward sometimes-cash positions: helps when down/choppy, hurts when up. Not signal.
+
+**Workflow lesson reinforced (third time now).** First draft of the per-period "reading this" narrative was written from memory, *before* I generated the per-period numbers, and contradicted them on 2025 and Q1 2026. Caught it during review and rewrote from the actual table. Same lesson as the six-signal PR (#15) and the chart-vs-log cross-check from the verify-script bug. **Never write interpretation before you've generated the data it interprets, and sanity-check chart numbers against the logged metrics.**
+
+**Pacing observation worth keeping.** Reviewer pushback ("are you sure?", "how do I trust this?", "add the logistic lines and per-period table") was responsible for *all* of the most valuable framing changes — the diagnostic suite, the calibration reframe, the per-period regime story. Headline framing pre-pushback was "LightGBM fits noise"; post-pushback was "no model has signal because the features/target is the bottleneck." Different conclusions, different next moves. Suggests: when reporting a negative result, build in at least one round of "what would convince me this is wrong?" before declaring done.
 
 ### 2026-05-27 — `class_weight=None` sanity check before LightGBM
 
