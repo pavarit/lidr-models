@@ -28,6 +28,7 @@ SIGNAL_CASES = [
     ("macd", {"fast": 12, "slow": 26, "signal": 9}),
     ("bollinger", {"period": 20}),
     ("breakout", {"period": 20}),
+    ("volume", {"period": 20}),
 ]
 
 
