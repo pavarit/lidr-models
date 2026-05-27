@@ -102,6 +102,26 @@ def _rsi_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
     return pd.Series(rsi, index=prices.index)
 
 
+def _bollinger_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
+    """Reference Bollinger z-score — loop over windows, no pd.rolling.
+
+    Structurally different from the signal (which uses pd.Series.rolling).
+    Standard deviation is computed with ``ddof=0`` to match lidr's TS
+    ``meanStd()`` (population std).
+    """
+    period = params["period"]
+    close = prices["close"].to_numpy()
+    n = len(close)
+    out = np.full(n, np.nan)
+    for i in range(period - 1, n):
+        window = close[i - period + 1 : i + 1]
+        mean = window.mean()
+        std = window.std(ddof=0)
+        if std > 0:
+            out[i] = (close[i] - mean) / std
+    return pd.Series(out, index=prices.index)
+
+
 def _macd_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
     """Reference MACD — explicit loop-based EMA, no pandas operations inside.
 
@@ -211,6 +231,35 @@ ACCURACY_CASES = [
         ],
     ),
     (
+        "bollinger",
+        {"period": 20},
+        _bollinger_reference,
+        arithmetic_prices,
+        # Spot checks on arithmetic_prices (close[i] = 100 + i).
+        #
+        # For any index k >= 19, the rolling 20-day window is [k-19, ..., k] —
+        # 20 consecutive integers with step 1. Mean = midpoint = (close[k-19]+close[k])/2,
+        # so close[k] - mean = 9.5 (constant in k). Deviations from mean are
+        # ±0.5, ±1.5, ..., ±9.5 — independent of k. Population variance:
+        #
+        #   var = (2 * sum_{j=0..9} (j + 0.5)^2) / 20
+        #       = (2 * (0+1+...+81 + 0+1+...+9 + 10*0.25)) / 20
+        #       = (2 * (285 + 45 + 2.5)) / 20
+        #       = 665 / 20
+        #       = 33.25 = 133/4
+        #
+        #   std = sqrt(133)/2,  z = 9.5 / (sqrt(133)/2) = 19/sqrt(133) ≈ 1.6473.
+        #
+        # So z is identical at every valid index on this fixture — a strong
+        # invariant the signal must reproduce.
+        [
+            (18, float("nan")),     # window not yet full
+            (19, 19.0 / np.sqrt(133.0)),   # first valid value
+            (50, 19.0 / np.sqrt(133.0)),   # middle of the series
+            (99, 19.0 / np.sqrt(133.0)),   # last index
+        ],
+    ),
+    (
         "macd",
         {"fast": 12, "slow": 26, "signal": 9},
         _macd_reference,
@@ -261,12 +310,16 @@ def test_signal_matches_reference(
         f"{name}: NaN mask mismatch between signal and reference"
     )
 
-    # Non-NaN values must match to machine precision.
+    # Non-NaN values must match to ~machine precision. The tolerance is set
+    # well below any real-bug threshold but loose enough that two
+    # mathematically-equivalent algorithms (e.g. pandas' streaming rolling.std
+    # vs numpy.std on each window) can disagree at the 1e-11 level without
+    # the test going red.
     mask = ~actual.isna()
     np.testing.assert_allclose(
         actual[mask].to_numpy(),
         expected[mask].to_numpy(),
-        rtol=1e-12,
+        rtol=1e-8,
         err_msg=f"{name}: signal diverges from reference formula",
     )
 
