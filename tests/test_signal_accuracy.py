@@ -69,6 +69,37 @@ def constant_prices(n: int = 60, value: float = 100.0) -> pd.DataFrame:
     return pd.DataFrame({"close": pd.Series([value] * n, dtype=float)})
 
 
+def step_prices() -> pd.DataFrame:
+    """Constructed step-price fixture for breakout spot checks.
+
+    Layout (30 rows):
+        indices  0..9   → close = 100
+        indices 10..14  → close = 110
+        indices 15..19  → close = 105
+        indices 20..24  → close = 100
+        indices 25..29  → close = 110
+
+    With period=20, the rolling window's min is always 100 and max is always
+    110 at indices 19, 24, and 29 — varying only the *current* close so the
+    feature (close − low) / (high − low) lands at three distinct positions
+    in [0, 1] that are derivable by hand:
+
+        idx 19 → close=105 → feature = (105-100)/(110-100) = 0.5  (mid)
+        idx 24 → close=100 → feature =     0 / 10           = 0.0  (at low)
+        idx 29 → close=110 → feature =    10 / 10           = 1.0  (at high)
+    """
+    close = np.concatenate(
+        [
+            np.full(10, 100.0),
+            np.full(5, 110.0),
+            np.full(5, 105.0),
+            np.full(5, 100.0),
+            np.full(5, 110.0),
+        ]
+    )
+    return pd.DataFrame({"close": close})
+
+
 # ---------------------------------------------------------------------------
 # Reference implementations for non-trivial signals.
 # ---------------------------------------------------------------------------
@@ -100,6 +131,28 @@ def _rsi_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
             rsi[k] = 100.0 if al == 0.0 else 100.0 - 100.0 / (1.0 + ag / al)
 
     return pd.Series(rsi, index=prices.index)
+
+
+def _breakout_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
+    """Reference breakout — loop over windows, no pd.rolling.
+
+    Structurally different from the signal's pd.rolling.max/min path so a
+    shared bug is unlikely. Matches lidr's TS contract: position of close
+    inside the N-day [low, high] range, NaN when range is zero or window
+    not yet full.
+    """
+    period = params["period"]
+    close = prices["close"].to_numpy()
+    n = len(close)
+    out = np.full(n, np.nan)
+    for i in range(period - 1, n):
+        window = close[i - period + 1 : i + 1]
+        lo = window.min()
+        hi = window.max()
+        rng = hi - lo
+        if rng > 0:
+            out[i] = (close[i] - lo) / rng
+    return pd.Series(out, index=prices.index)
 
 
 def _bollinger_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
@@ -228,6 +281,21 @@ ACCURACY_CASES = [
             (13, float("nan")),   # last index before seed (period=14 → seed at idx 14)
             (14, 200.0 / 3.0),    # seed: avg_gain=1, avg_loss=0.5, rs=2, rsi=66.6667
             (15, 3000.0 / 43.0),  # first recursion step ≈ 69.7674
+        ],
+    ),
+    (
+        "breakout",
+        {"period": 20},
+        _breakout_reference,
+        step_prices,
+        # Spot checks on step_prices (see fixture docstring for layout).
+        # The rolling 20-day [low, high] is locked at [100, 110] at indices
+        # 19, 24, 29, so the feature depends only on close at those points.
+        [
+            (18, float("nan")),       # window not yet full (need 20 rows, only 19 available)
+            (19, 0.5),                # close=105, mid-range: (105-100)/(110-100) = 0.5
+            (24, 0.0),                # close=100, at the low:    0/10 = 0.0
+            (29, 1.0),                # close=110, at the high:  10/10 = 1.0
         ],
     ),
     (
