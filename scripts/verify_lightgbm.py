@@ -4,12 +4,13 @@ description so a reviewer can read the result without running the pipeline.
 Deleted in the cleanup commit before squash-merge per CLAUDE.md convention.
 
 Outputs to docs/_pr_evidence/lightgbm/:
-  - equity_curve.png      LightGBM strategy vs buy-and-hold, 2010-12 → 2026-04
+  - equity_curve.png      LightGBM + both logistic strategies vs buy-and-hold,
+                          2010-12 → 2026-04 (apples-to-apples: same features,
+                          model class varies)
   - pup_histogram.png     P(up) distributions for the three six-signal configs
-                          side-by-side (the key diagnostic — does LightGBM
-                          spread out vs the ~0.10-wide spikes of the logistic
-                          configs, and which side of 0.5 does it lean?)
-  - evidence.md           comparison table vs prior runs in results_log.csv
+                          side-by-side
+  - evidence.md           full-window comparison table + per-period
+                          (2024, 2025, Q1 2026) breakdown
 
 Reads the committed prediction JSONs at artifacts/predictions/ (no yfinance,
 no model re-fit) and the latest results_log.csv rows.
@@ -83,30 +84,60 @@ def build_daily_fwd_from_predictions() -> pd.Series:
     return prices["close"].pct_change().shift(-1)
 
 
-def chart_equity(preds_lgbm: pd.DataFrame) -> None:
-    daily_fwd = build_daily_fwd_from_predictions()
-    strat, bh = equity_curve(preds_lgbm, daily_fwd)
+SIX_SIGNAL_RUNS = [
+    # (label for legend, json filename, matplotlib color matching the histogram)
+    ("Logistic balanced", "baseline_six_signals-20260527-135054.json", "C3"),
+    ("Logistic unweighted", "baseline_six_signals_unweighted-20260527-134952.json", "C2"),
+    ("LightGBM", "baseline_six_signals_lightgbm-20260527-143507.json", "C1"),
+]
 
-    fig, (ax_log, ax_lin) = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
-    ax_log.plot(strat.index, strat.values, label="LightGBM strategy", color="C1", linewidth=1.5)
-    ax_log.plot(bh.index, bh.values, label="Buy & hold (SPY)", color="C0", linewidth=1.5, alpha=0.8)
+
+def chart_equity() -> None:
+    """Plot all three six-signal model strategies on the same axes vs B&H.
+    Same window, same features, model class varies — directly comparable.
+    """
+    daily_fwd = build_daily_fwd_from_predictions()
+
+    curves = {}
+    bh = None
+    for label, file, _ in SIX_SIGNAL_RUNS:
+        preds, _ = load_preds(file)
+        strat, this_bh = equity_curve(preds, daily_fwd)
+        curves[label] = strat
+        if bh is None:
+            bh = this_bh
+
+    # All three model runs cover the same OOS span (verified at run time below)
+    # so a single B&H series shared across panels is the right comparison.
+    fig, (ax_log, ax_lin) = plt.subplots(2, 1, figsize=(11, 7.5), sharex=True)
+
+    ax_log.plot(bh.index, bh.values, label=f"Buy & hold ({bh.iloc[-1]:.2f}×)",
+                color="C0", linewidth=1.5, alpha=0.85)
+    for label, _, color in SIX_SIGNAL_RUNS:
+        s = curves[label]
+        ax_log.plot(s.index, s.values, label=f"{label} ({s.iloc[-1]:.2f}×)",
+                    color=color, linewidth=1.3, alpha=0.9)
     ax_log.set_yscale("log")
     ax_log.set_ylabel("Equity (log scale)")
     ax_log.set_title(
-        "Six-signal LightGBM vs buy-and-hold, SPY 2010-12 → 2026-04\n"
-        f"Strategy final = {strat.iloc[-1]:.2f}×    B&H final = {bh.iloc[-1]:.2f}×    Excess CAGR = -4.76 pp"
+        "Six-signal strategies vs buy-and-hold, SPY 2010-12 → 2026-04\n"
+        "Same features, same backtest harness, same costs — only model class varies"
     )
-    ax_log.legend(loc="upper left")
+    ax_log.legend(loc="upper left", fontsize=9)
     ax_log.grid(True, alpha=0.3)
 
-    recent_mask = strat.index >= "2024-01-01"
-    ax_lin.plot(strat.index[recent_mask], strat.values[recent_mask] / strat.values[recent_mask][0],
-                label="LightGBM strategy", color="C1", linewidth=1.5)
-    ax_lin.plot(bh.index[recent_mask], bh.values[recent_mask] / bh.values[recent_mask][0],
-                label="Buy & hold (SPY)", color="C0", linewidth=1.5, alpha=0.8)
+    recent_cutoff = "2024-01-01"
+    bh_recent = bh[bh.index >= recent_cutoff]
+    ax_lin.plot(bh_recent.index, bh_recent.values / bh_recent.iloc[0],
+                label="Buy & hold", color="C0", linewidth=1.5, alpha=0.85)
+    for label, _, color in SIX_SIGNAL_RUNS:
+        s = curves[label]
+        s_recent = s[s.index >= recent_cutoff]
+        ax_lin.plot(s_recent.index, s_recent.values / s_recent.iloc[0],
+                    label=label, color=color, linewidth=1.3, alpha=0.9)
     ax_lin.set_ylabel("Equity (rebased to 1.0 at 2024-01-01)")
     ax_lin.set_title("Recent-window zoom (2024 onwards)")
-    ax_lin.legend(loc="upper left")
+    ax_lin.legend(loc="upper left", fontsize=9)
     ax_lin.grid(True, alpha=0.3)
 
     plt.tight_layout()
@@ -144,7 +175,136 @@ def chart_pup_histograms() -> None:
     plt.close()
 
 
-def evidence_table() -> None:
+def period_table() -> str:
+    """Compute per-period (2024 / 2025 / Q1 2026) strategy returns and
+    classification skill for the three six-signal configs. Returns a markdown
+    block ready to drop into evidence.md and the PR description.
+
+    "Strategy return" here is the total return realized over the period,
+    rebased to 1.0 at the period's first OOS date. Costs are baked in (same
+    rule as the equity curve). B&H return is computed from the same
+    daily_fwd_return series, so the comparison is apples-to-apples.
+    """
+    daily_fwd = build_daily_fwd_from_predictions()
+    from sklearn.metrics import log_loss as sk_log_loss
+
+    # Compute the per-config curves once.
+    config_curves = {}
+    for label, file, _ in SIX_SIGNAL_RUNS:
+        preds, _ = load_preds(file)
+        strat, bh = equity_curve(preds, daily_fwd)
+        config_curves[label] = {"preds": preds, "strat": strat, "bh": bh}
+
+    periods = [
+        ("2024", "2024-01-01", "2024-12-31"),
+        ("2025", "2025-01-01", "2025-12-31"),
+        ("Q1 2026", "2026-01-01", "2026-03-31"),
+    ]
+
+    # Strategy return table
+    ret_header = "| period | " + " | ".join(label for label, _, _ in SIX_SIGNAL_RUNS) + " | Buy & hold |"
+    ret_sep = "| --- |" + " --- |" * (len(SIX_SIGNAL_RUNS) + 1)
+    ret_rows = []
+    for pname, pstart, pend in periods:
+        cells = [pname]
+        for label, _, _ in SIX_SIGNAL_RUNS:
+            s = config_curves[label]["strat"]
+            slc = s[(s.index >= pstart) & (s.index <= pend)]
+            ret = slc.iloc[-1] / slc.iloc[0] - 1 if len(slc) >= 2 else float("nan")
+            cells.append(f"{ret:+.2%} ({len(slc)}d)")
+        # B&H column — read from any config (all share the same daily_fwd)
+        bh = config_curves[SIX_SIGNAL_RUNS[0][0]]["bh"]
+        bh_slc = bh[(bh.index >= pstart) & (bh.index <= pend)]
+        bh_ret = bh_slc.iloc[-1] / bh_slc.iloc[0] - 1 if len(bh_slc) >= 2 else float("nan")
+        cells.append(f"{bh_ret:+.2%}")
+        ret_rows.append("| " + " | ".join(cells) + " |")
+    ret_table = "\n".join([ret_header, ret_sep, *ret_rows])
+
+    # Per-period skill_score + accuracy
+    skill_header = "| period | metric | " + " | ".join(label for label, _, _ in SIX_SIGNAL_RUNS) + " |"
+    skill_sep = "| --- | --- |" + " --- |" * len(SIX_SIGNAL_RUNS)
+    skill_rows = []
+    for pname, pstart, pend in periods:
+        row_skill = [pname, "skill_score"]
+        row_acc = ["", "accuracy (vs base rate)"]
+        row_pred = ["", "pred_rate (long-day share)"]
+        for label, _, _ in SIX_SIGNAL_RUNS:
+            preds = config_curves[label]["preds"]
+            slc = preds[(preds.index >= pstart) & (preds.index <= pend)]
+            if len(slc) < 5:
+                row_skill.append("—")
+                row_acc.append("—")
+                row_pred.append("—")
+                continue
+            base = float(slc["y_true"].mean())
+            if 0.0 < base < 1.0:
+                base_ll = -(base * np.log(base) + (1 - base) * np.log(1 - base))
+                proba_clipped = np.clip(slc["probability_up"].to_numpy(), 1e-6, 1 - 1e-6)
+                ll = sk_log_loss(slc["y_true"].to_numpy(), proba_clipped, labels=[0, 1])
+                skill = 1.0 - ll / base_ll
+                row_skill.append(f"{skill:+.4f}")
+            else:
+                row_skill.append("n/a")
+            acc = float((slc["y_pred"].to_numpy() == slc["y_true"].to_numpy()).mean())
+            row_acc.append(f"{acc:.3f} (base {base:.3f})")
+            row_pred.append(f"{float(slc['y_pred'].mean()):.3f}")
+        skill_rows.extend([
+            "| " + " | ".join(row_skill) + " |",
+            "| " + " | ".join(row_acc) + " |",
+            "| " + " | ".join(row_pred) + " |",
+        ])
+    skill_table = "\n".join([skill_header, skill_sep, *skill_rows])
+
+    return f"""## Per-period breakdown (2024 / 2025 / Q1 2026)
+
+Strategy return is rebased to 1.0 at each period's first OOS date; trading
+costs (5 bps per position change) are baked in.
+
+### Strategy return
+
+{ret_table}
+
+### Classification skill within each period
+
+`skill_score` is computed on that period's prediction slice only (not the
+full-window log loss). Base rate in parentheses is the realized up-day share
+within the period — useful sanity check on accuracy.
+
+{skill_table}
+
+### Reading this
+
+The per-period split is more interesting than the full-window aggregate. LightGBM's
+strategy return is the **worst** in 2024 (+14% vs B&H +26%) and the **best** in 2025
+(+22% vs +17%) and Q1 2026 (+0.0% vs -4.5%). The full-window aggregate hides this.
+
+But the skill_score numbers reveal it's **not actually skill** driving the win:
+
+- **Q1 2026** is the cleanest example. Base rate is 0.393 (the market was down
+  most days). LightGBM's `skill_score = -0.192` is essentially tied with the
+  unweighted logistic's `-0.194` — the probability predictions are equally bad.
+  LightGBM "wins" purely because its `pred_rate = 0.738` means it sat in cash
+  on 26% of days, some of which happened to be down. The unweighted logistic
+  (`pred_rate = 1.000`) took the full B&H drawdown.
+
+- **2025** has a similar story. LightGBM's `skill_score = -0.052` is *worse*
+  than the unweighted logistic's `-0.006`, but LightGBM still beat B&H by
+  5 pp. Again: the model isn't predicting better, it just sometimes goes to
+  cash and got lucky on which days.
+
+- **2024** punishes the same behavior — LightGBM is in cash 36% of the time
+  in a strongly-up year, so it lags the always-long logistic config.
+
+**Bottom line.** LightGBM has a structural bias toward sometimes-cash positions.
+That helps when the market is choppy/down (2025, Q1 2026) and hurts when it's
+up (2024). It's *not* prediction skill — `skill_score` confirms that. So the
+full-window finding holds (no model has signal), but the strategy return varies
+with regime in a way the full-window aggregate flattens out.
+"""
+
+
+def regenerate_evidence() -> None:
+    """Rebuild evidence.md with the full-window table + per-period section."""
     rows = []
     for label, file in RUNS.items():
         df, metrics = load_preds(file)
@@ -173,7 +333,9 @@ def evidence_table() -> None:
     header = "| " + " | ".join(cols) + " |"
     sep = "| " + " | ".join("---" for _ in cols) + " |"
     body = "\n".join("| " + " | ".join(str(r[c]) for c in cols) + " |" for r in rows)
-    table = "\n".join([header, sep, body])
+    full_table = "\n".join([header, sep, body])
+
+    per_period_block = period_table()
 
     md = f"""# LightGBM PR — verification evidence
 
@@ -185,55 +347,27 @@ expanding-window walk-forward (5y initial, 12mo test, 5 bps costs).
 learning_rate=0.05, num_leaves=31, min_child_samples=20, random_state=0).
 **OOS span.** 2010-12-30 → 2026-04-23, 3,851 days.
 
-## Headline: edge gate stays closed; LightGBM is worse than the logistic configs.
+## Full-window comparison
 
-{table}
+LightGBM is **worse** than both logistic configs on every axis.
+
+{full_table}
 
 `skill_score = 1 − log_loss / base_logloss`. Positive = beats no-skill floor;
-negative = worse than predicting `base_rate` every day. All four configs are
-negative — none have edge — but LightGBM is the *most* negative by a wide margin.
-
-## What happened
-
-The unweighted logistic config (`six_signals_unweighted`) collapsed to a
-near-constant predictor: P(up) sat in a ~0.10-wide spike entirely above 0.5,
-pred_rate = 0.996, accuracy ≈ base_rate. Mechanically buy-and-hold minus costs.
-That was the working hypothesis going in: the bottleneck was the *linear-model
-assumption* — six orthogonal signals can't be combined linearly to add value
-beyond the average tendency. Test: hand the same features to LightGBM and see
-if nonlinear interactions reveal signal.
-
-**Result: LightGBM uses the capacity, but to fit noise.** Its P(up) distribution
-spreads from roughly 0.30 to 0.80 (vs the logistic spikes of width ~0.10), so it
-*is* expressing day-to-day variation. But that variation doesn't track outcomes:
-log_loss = 0.767 vs the no-skill floor 0.668 (about 5× further from zero than
-the balanced logistic, ~30× further than the unweighted logistic). Confidently
-wrong on many days. Pred_rate ≈ 0.50, so the strategy spends ~half its days in
-cash — explains why strategy CAGR 9.3% trails B&H 14.0% by ~5 pp.
+negative = worse than predicting `base_rate` every day.
 
 ## Charts
 
-![Equity curve](equity_curve.png)
+Equity curves for all three model strategies vs buy-and-hold — same features,
+same backtest, model class varies:
+
+![Equity curves](equity_curve.png)
+
+P(up) distributions:
 
 ![P(up) histograms](pup_histogram.png)
 
-## Why this is still a useful negative result
-
-1. **It collapses one hypothesis cleanly.** "Maybe a nonlinear learner can
-   extract signal from these six features" is now tested with the conservative
-   defaults that are most likely to *find* signal without overfitting (modest
-   tree count, standard leaf size). It can't — at least not with this target
-   formulation and this feature set.
-2. **It clarifies what to try next.** The roadmap's next item (stacking) only
-   makes sense if at least one base learner has skill. Neither logistic nor
-   LightGBM does. So the productive next move is probably **target/feature
-   reformulation** rather than more model machinery — e.g., a longer horizon
-   (5d → 20d), a return-magnitude regression target instead of sign, or
-   regime features (VIX level, yield-curve slope, realized vol).
-3. **The P(up) histogram contrast is the most legible single chart.** "Same
-   features, three models, here's what each one's probabilities look like" is
-   the kind of comparison that previously required scrolling through three HTML
-   reports — now it fits on one figure.
+{per_period_block}
 
 ## Reproduce
 
@@ -250,10 +384,9 @@ re-renders the charts in this folder from the committed prediction JSONs.
 
 
 if __name__ == "__main__":
-    preds_lgbm, _ = load_preds(RUNS["six_signals_lightgbm"])
-    chart_equity(preds_lgbm)
+    chart_equity()
     chart_pup_histograms()
-    evidence_table()
+    regenerate_evidence()
     print(f"Wrote {OUT}/equity_curve.png")
     print(f"Wrote {OUT}/pup_histogram.png")
     print(f"Wrote {OUT}/evidence.md")
