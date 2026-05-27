@@ -1,9 +1,11 @@
 from lidr_ml.models.base import Model
+from lidr_ml.models.lightgbm import LightGBMModel
 from lidr_ml.models.logistic import LogisticRegressionModel
 
 # name → Model class
 MODEL_REGISTRY: dict[str, type[Model]] = {
     "logistic_regression": LogisticRegressionModel,
+    "lightgbm": LightGBMModel,
 }
 
 
