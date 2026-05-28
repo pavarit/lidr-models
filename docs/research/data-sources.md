@@ -41,7 +41,7 @@
 
 ## The point-in-time caveat (important for any backtest)
 
-The cheap providers (Tiingo, EODHD, Marketaux) generally do **not** guarantee strict *point-in-time* correctness — i.e. that a sentiment score or article timestamp wasn't quietly revised/backfilled after the fact. That backfill risk is exactly what RavenPack charges a fortune to eliminate. At the $10 tier we get ~90% of the way there, but we must **validate ourselves that timestamps are true publish times**, or the backtest will look better than reality. This is the same lookahead-bias trap that `tests/test_no_lookahead.py` guards on the signal side — it has to extend to news ingestion.
+The cheap providers (Tiingo, EODHD, Marketaux) generally do **not** guarantee strict *point-in-time* correctness — i.e. that a sentiment score or article timestamp wasn't quietly revised/backfilled after the fact. That backfill risk is exactly what RavenPack charges a fortune to eliminate. At the $10 tier we get ~90% of the way there, but we must **validate ourselves that timestamps are true publish times**, or the backtest will look better than reality. This is the same lookahead-bias trap that `packages/ta_ensemble/tests/test_no_lookahead.py` guards on the signal side — it has to extend to news ingestion.
 
 ## Decision log
 

@@ -45,7 +45,7 @@ news_sentiment/src/news_sentiment/
 
 **Phase 0 — start the data clock immediately.** Implement `collector.py` + the free adapters (EDGAR, GDELT, Reddit, Google Trends) and begin logging raw items with publish timestamps to disk *now*. Reddit history can't be backfilled, so every day of delay is lost training data. Pick 5–10 high-news names (e.g. mega-cap tech + a couple of high-chatter names) for the first universe; make the universe a config field.
 
-**Phase 1 — historical backtest depth via Tiingo.** Implement `tiingo.py`. Tiingo's ~10yr tagged history is what lets a backtest run *now* instead of waiting months. **Point-in-time discipline is mandatory:** store true publish timestamps, use only items published strictly before each prediction timestamp, and extend the lookahead test to cover news features (mirror `test_no_lookahead.py`).
+**Phase 1 — historical backtest depth via Tiingo.** Implement `tiingo.py`. Tiingo's ~10yr tagged history is what lets a backtest run *now* instead of waiting months. **Point-in-time discipline is mandatory:** store true publish timestamps, use only items published strictly before each prediction timestamp, and extend the lookahead test to cover news features (mirror `packages/ta_ensemble/tests/test_no_lookahead.py`).
 
 **Phase 2 — scoring (FinBERT + LLM hybrid).** FinBERT scores the bulk for free. The LLM handles ambiguous / high-relevance items and adds relevance + entity-linking + event-type. **Cost controls (required):**
 - Cache every LLM result keyed by a content hash — never pay twice for the same text.
