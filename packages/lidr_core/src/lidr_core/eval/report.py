@@ -205,7 +205,7 @@ def write_report(
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>lidr-ml report — {config_name}</title>
+<title>lidr-models report — {config_name}</title>
 <style>
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
           max-width: 980px; margin: 2rem auto; padding: 0 1rem; color: #222; }}
@@ -219,7 +219,7 @@ def write_report(
 </style>
 </head>
 <body>
-<h1>lidr-ml backtest — {config_name}</h1>
+<h1>lidr-models backtest — {config_name}</h1>
 <p class="small">Generated {timestamp}</p>
 
 <h2>Summary</h2>

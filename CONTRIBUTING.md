@@ -111,7 +111,7 @@ gh pr merge --squash --delete-branch
 git checkout main && git pull
 ```
 
-> Unlike the sibling `lidr` project, lidr-ml does not auto-deploy anywhere — there is no Vercel preview to check. CI passing is the only required gate. The artifact `lidr-ml` produces (the JSON predictions file) is consumed manually, so there is no continuous deployment to worry about.
+> Unlike the sibling `lidr` project, lidr-models does not auto-deploy anywhere — there is no Vercel preview to check. CI passing is the only required gate. The artifact `lidr-models` produces (the JSON predictions file) is consumed manually, so there is no continuous deployment to worry about.
 
 > Emergencies: as the repo admin, you can override branch protection and push directly. Don't make a habit of it.
 
