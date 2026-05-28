@@ -2,7 +2,7 @@
 
 This file orients any AI assistant (Claude Code, Claude Cowork, etc.) joining this project. Read it before doing anything else. Then keep it current — see "Maintenance Instructions" at the bottom.
 
-**Hosting repo**: https://github.com/pavarit/lidr-ml (the GitHub repo rename `lidr-ml` → `lidr-models` is a separate UI step deferred until the public face needs updating; the working directory and on-disk imports use the new `lidr_core` / `ta_ensemble` / `news_sentiment` layout).
+**Hosting repo**: https://github.com/pavarit/lidr-models (renamed from `lidr-ml` on 2026-05-27 after Task 1 merged; the old URL still redirects).
 
 ## Project Goal
 
@@ -27,7 +27,7 @@ Integration is via JSON files written to `artifacts/predictions/<model_id>/<conf
 - **Python** ≥ 3.10
 - **pandas / numpy** — data manipulation
 - **scikit-learn** — base learners + walk-forward CV (`TimeSeriesSplit`)
-- **LightGBM** — second base learner (added 2026-05-27, [PR #20](https://github.com/pavarit/lidr-ml/pull/20))
+- **LightGBM** — second base learner (added 2026-05-27, [PR #20](https://github.com/pavarit/lidr-models/pull/20))
 - **yfinance** — free historical price data (with synthetic-data fallback for offline dev)
 - **PyYAML** — config files
 - **Typer** — CLI
@@ -241,7 +241,7 @@ Wrote four planning docs under `docs/` (adr/, research/, plans/) — see the Act
 
 ### 2026-05-27 — LightGBM checkpoint: still no edge, and the model class is not the bottleneck
 
-Shipped LightGBM as the second base learner ([PR #20](https://github.com/pavarit/lidr-ml/pull/20), commit `c4f0044`). New module `src/lidr_ml/models/lightgbm.py`, registered as `"lightgbm"` in the model registry, configured via `configs/baseline_six_signals_lightgbm.yaml` (identical to `baseline_six_signals_unweighted.yaml` except `model.type`). Conservative defaults: `n_estimators=200`, `learning_rate=0.05`, `num_leaves=31`, `min_child_samples=20`. New row in `artifacts/results_log.csv` at `run_id=20260527-143507`.
+Shipped LightGBM as the second base learner ([PR #20](https://github.com/pavarit/lidr-models/pull/20), commit `c4f0044`). New module `src/lidr_ml/models/lightgbm.py`, registered as `"lightgbm"` in the model registry, configured via `configs/baseline_six_signals_lightgbm.yaml` (identical to `baseline_six_signals_unweighted.yaml` except `model.type`). Conservative defaults: `n_estimators=200`, `learning_rate=0.05`, `num_leaves=31`, `min_child_samples=20`. New row in `artifacts/results_log.csv` at `run_id=20260527-143507`.
 
 **Headline: LightGBM is worse than logistic on this problem.** `skill_score = -0.1478` vs the unweighted logistic's -0.005. Strategy CAGR 9.3% vs B&H 14.0%.
 

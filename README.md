@@ -1,6 +1,6 @@
 # lidr-models
 
-[![CI](https://github.com/pavarit/lidr-ml/actions/workflows/test.yml/badge.svg)](https://github.com/pavarit/lidr-ml/actions/workflows/test.yml)
+[![CI](https://github.com/pavarit/lidr-models/actions/workflows/test.yml/badge.svg)](https://github.com/pavarit/lidr-models/actions/workflows/test.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm--Noncommercial%201.0.0-blue.svg)](LICENSE)
 
@@ -70,7 +70,7 @@ One pipeline per model, top-to-bottom — orchestrated from each model's `pipeli
 
 The HTML report contains: a config summary, top-line classification metrics with the no-skill floor (`base_logloss`) beside log loss, the Strategy-vs-Buy&Hold comparison table, the per-year classification breakdown, the per-year strategy-vs-benchmark returns with excess column, and the equity-curve chart. Wins are green/red-highlighted against the benchmark.
 
-**Example report**: [view rendered](https://htmlpreview.github.io/?https://github.com/pavarit/lidr-ml/blob/main/docs/sample-report/report.html) (via `htmlpreview.github.io`) or [view raw HTML](docs/sample-report/report.html). Same baseline run cited in the SPY baseline status below (`baseline_v1-20260526-124439`).
+**Example report**: [view rendered](https://htmlpreview.github.io/?https://github.com/pavarit/lidr-models/blob/main/docs/sample-report/report.html) (via `htmlpreview.github.io`) or [view raw HTML](docs/sample-report/report.html). Same baseline run cited in the SPY baseline status below (`baseline_v1-20260526-124439`).
 
 ## What's in the box right now
 
