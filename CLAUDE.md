@@ -2,22 +2,25 @@
 
 This file orients any AI assistant (Claude Code, Claude Cowork, etc.) joining this project. Read it before doing anything else. Then keep it current — see "Maintenance Instructions" at the bottom.
 
-**Hosting repo**: https://github.com/pavarit/lidr-ml
+**Hosting repo**: https://github.com/pavarit/lidr-ml (the GitHub repo rename `lidr-ml` → `lidr-models` is a separate UI step deferred until the public face needs updating; the working directory and on-disk imports use the new `lidr_core` / `ta_ensemble` / `news_sentiment` layout).
 
 ## Project Goal
 
-`lidr-ml` is the Python ML/backtesting pipeline that turns the technical signals from the sibling project [`lidr`](https://github.com/pavarit/lidr) into **empirically calibrated BUY / HOLD / SELL recommendations**. lidr's confidence values today are heuristics (normalized strength scores). This project's job is to replace them with probabilities learned from historical data — by training an ensemble model over the signals, backtested with walk-forward validation from 2005 to today.
+`lidr-models` is the Python research monorepo that turns market data into **empirically calibrated BUY / HOLD / SELL recommendations** consumed by the sibling project [`lidr`](https://github.com/pavarit/lidr) (the Next.js front-end). lidr's confidence values today are heuristics (normalized strength scores). This repo's job is to replace them with probabilities learned from historical data — and to host *several competing* models, each scored on the same harness and benchmark, so the best-performing one feeds production.
 
-The pipeline emits a versioned JSON artifact that lidr's `/api/signals/[ticker]` route can read directly. No running Python service is needed until lidr's FastAPI-service roadmap item is triggered.
+Models are backtested with walk-forward validation from 2005 to today and emit a versioned JSON artifact (schema_version: 2) that lidr's `/api/signals/[ticker]` route can read directly. No running Python service is needed until lidr's FastAPI-service roadmap item is triggered.
 
 ## Architecture
 
-Two-project setup, deliberately kept separate:
+Two-repo setup, deliberately kept separate:
 
-- **`lidr`** (Next.js, `C:\Users\smnk1\Claude\Projects\lidr`) — the website. Computes signals live in TS for display, will eventually overlay calibrated probabilities from the artifact this project produces.
-- **`lidr-ml`** (this project, Python) — produces the model and the artifact. Iterates on its own cadence with its own tooling.
+- **`lidr`** (Next.js, `C:\Users\smnk1\Claude\Projects\lidr`) — the website. Computes signals live in TS for display, will eventually overlay calibrated probabilities from the artifacts this repo produces.
+- **`lidr-models`** (this repo, Python) — a research monorepo that produces the artifacts. Three packages under `packages/`:
+  - `lidr_core` — shared harness: backtest engine, eval/metrics, results_log + leaderboard, the JSON artifact contract (schema + writer + loader), the `SignalFn` / `Model` / `Feature` / `DataSource` protocols, base data loaders, generic learners (logistic / LightGBM). Owned once, reused by every model.
+  - `ta_ensemble` — the six technical-analysis signals + their pipeline. Today's only complete model.
+  - `news_sentiment` — placeholder shell, filled in by Task 2.
 
-Integration is via a JSON file (`artifacts/predictions/<config>-<timestamp>.json`), not an HTTP service. Cheap, debuggable, version-controllable. A FastAPI service is on the lidr roadmap and will be added here when the lidr side is ready to consume live predictions.
+Integration is via JSON files written to `artifacts/predictions/<model_id>/<config>-<timestamp>.json`, validated against the contract on write, plus a top-level `artifacts/manifest.json` leaderboard lidr will use to discover models. Cheap, debuggable, version-controllable. A FastAPI service is on the lidr roadmap and will be added here when the lidr side is ready to consume live predictions.
 
 ## Stack
 
@@ -28,9 +31,12 @@ Integration is via a JSON file (`artifacts/predictions/<config>-<timestamp>.json
 - **yfinance** — free historical price data (with synthetic-data fallback for offline dev)
 - **PyYAML** — config files
 - **Typer** — CLI
+- **jsonschema** — artifact contract validation on write/read
 - **Matplotlib** — chart embedded in HTML reports (base64, no internet needed to view)
 - **pytest** — tests
 - **ruff** — lint + format
+
+Workspace: each package under `packages/<name>/` has its own `pyproject.toml`; the root `pyproject.toml` carries only the dev-tool config (`ruff`, `pytest`) and a meta dev install. `make install` installs all three packages editable so cross-package imports resolve.
 
 Planned but not yet added: **MLflow** (experiment tracking — on the roadmap but deferred behind the CSV results log), **vectorbt** (faster backtest sweeps — not yet on the roadmap; revisit if the custom engine becomes the bottleneck).
 
@@ -42,89 +48,113 @@ See [README.md → Quick start](README.md#quick-start) and [README.md → CLI](R
 
 Reading top-down:
 
-1. **Config** (`configs/*.yaml`) — declares what to run: tickers, date range, data source, which signals, which model, backtest method, transaction costs.
-2. **Data loader** (`src/lidr_ml/data/loaders.py`) — pulls OHLCV from yfinance (or generates synthetic series for offline dev). yfinance is called with `auto_adjust=True`, so close prices are total-return-adjusted (dividends + splits folded in); a "200-day high" is a 200-day high of the adjusted series, not the raw close. Cached by `(ticker, start, end)` in `data/raw/<ticker>_<start>_<end>.pkl`; the cache never expires, so `rm data/raw/*.pkl` to force a refresh from yfinance.
-3. **Signals** (`src/lidr_ml/signals/`) — each signal is a pure function that takes a DataFrame of prices and returns a Series of feature values aligned to the price index. Every signal must be **lookahead-safe** (only uses data up to time *t* to compute the value at time *t*). Tested in `tests/test_no_lookahead.py`.
-4. **Target** (computed inline in `src/lidr_ml/pipeline.py::run_pipeline`) — for now, binary: was the *N*-day forward return positive? Will become 3-class (BUY/HOLD/SELL) once we have a useful model.
-5. **Backtest engine** (`src/lidr_ml/backtest/engine.py`) — expanding-window walk-forward. For each split: fit model on train slice, predict on test slice, store predictions. Never trains on data after the test period.
-6. **Model** (`src/lidr_ml/models/`) — pluggable. Today: logistic regression and LightGBM. As of 2026-05-27, both have been backtested on the six-signal feature set against the 5d-forward-return-sign target; neither beats the no-skill baseline (see Recent Changes). The roadmap is currently pivoting to target/feature reformulation rather than more model classes.
-7. **Eval + report** (`src/lidr_ml/eval/`) — classification metrics (`classification_metrics` → `accuracy`, `base_rate`, `pred_rate`, `log_loss`, `base_logloss`, `n_obs`), strategy metrics (`strategy_metrics` → `cagr`, `sharpe`, `max_drawdown`, `final_equity`), and per-year breakdowns (`by_year` reports the classification fields per calendar year; `performance_by_year` reports strategy vs buy-and-hold returns and the excess). `base_rate` and `pred_rate` are deliberately shown beside `accuracy` — without them, an accuracy of 0.55 looks fine until you notice the base rate is 0.61. The equity curve itself is built in `backtest/engine.py::add_strategy_returns` ("go long when prediction = 1, cash otherwise"). HTML report written to `reports/<config>-<timestamp>/`. The report shows a **Strategy vs Buy & Hold** comparison table (CAGR, Sharpe, max drawdown, final equity for both legs) and a **per-year performance** table (strategy vs buy-hold return + excess) so regime-dependence is visible. A **Summary** section at the top translates the config into English and states the out-of-sample span (derived from the predictions, not the raw data range). Both the top classification metrics and the per-year table show **base_logloss** (the no-skill floor = entropy of the base rate) beside log loss, and the comparison/per-year tables green/red-highlight whichever side wins. The equity curve is marked to market with **1-day-forward returns**, not the N-day classification target — see Gotchas.
-8. **Cross-run results log** (`src/lidr_ml/eval/results_log.py`) — `append_run()` appends one row per backtest to `artifacts/results_log.csv` (skill score, full-OOS + per-period log loss with base-rate floors, strategy vs benchmark CAGR/Sharpe/max-drawdown, excess) so "did this change help?" is answerable without opening every HTML report. Opt out per-config with `output.results_log: false`; defaults to true. `configs/dev_synthetic.yaml` sets it false so the smoke test (run on every push/PR) doesn't pollute the tracked CSV with synthetic rows — `tests/test_pipeline_smoke.py` asserts the file size doesn't grow.
+1. **Config** (`packages/ta_ensemble/configs/*.yaml`) — declares what to run: tickers, date range, data source, which signals, which model, backtest method, transaction costs. Now also carries `model_id` + `model_version` so produced artifacts identify their model family.
+2. **Data loader** (`packages/lidr_core/src/lidr_core/data/loaders.py`) — pulls OHLCV from yfinance (or generates synthetic series for offline dev). yfinance is called with `auto_adjust=True`, so close prices are total-return-adjusted (dividends + splits folded in); a "200-day high" is a 200-day high of the adjusted series, not the raw close. Cached by `(ticker, start, end)` in `data/raw/<ticker>_<start>_<end>.pkl`; the cache never expires, so `rm data/raw/*.pkl` to force a refresh from yfinance.
+3. **Signals** (`packages/ta_ensemble/src/ta_ensemble/signals/`) — each signal is a pure function that takes a DataFrame of prices and returns a Series of feature values aligned to the price index. Every signal must be **lookahead-safe** (only uses data up to time *t* to compute the value at time *t*). Tested in `packages/ta_ensemble/tests/test_no_lookahead.py`.
+4. **Target** (computed inline in `packages/ta_ensemble/src/ta_ensemble/pipeline.py::run_pipeline`) — for now, binary: was the *N*-day forward return positive? Will become 3-class (BUY/HOLD/SELL) once we have a useful model.
+5. **Backtest engine** (`packages/lidr_core/src/lidr_core/backtest/engine.py`) — expanding-window walk-forward. For each split: fit model on train slice, predict on test slice, store predictions. Never trains on data after the test period.
+6. **Model** (`packages/lidr_core/src/lidr_core/models/`) — pluggable. Today: logistic regression and LightGBM (both generic, hence in `lidr_core`). As of 2026-05-27, both have been backtested on the six-signal feature set against the 5d-forward-return-sign target; neither beats the no-skill baseline (see Recent Changes). The roadmap is currently pivoting to target/feature reformulation rather than more model classes.
+7. **Eval + report** (`packages/lidr_core/src/lidr_core/eval/`) — classification metrics (`classification_metrics` → `accuracy`, `base_rate`, `pred_rate`, `log_loss`, `base_logloss`, `n_obs`), strategy metrics (`strategy_metrics` → `cagr`, `sharpe`, `max_drawdown`, `final_equity`), and per-year breakdowns (`by_year` reports the classification fields per calendar year; `performance_by_year` reports strategy vs buy-and-hold returns and the excess). `base_rate` and `pred_rate` are deliberately shown beside `accuracy` — without them, an accuracy of 0.55 looks fine until you notice the base rate is 0.61. The equity curve itself is built in `lidr_core/backtest/engine.py::add_strategy_returns` ("go long when prediction = 1, cash otherwise"). HTML report written to `reports/<config>-<timestamp>/`. The report shows a **Strategy vs Buy & Hold** comparison table (CAGR, Sharpe, max drawdown, final equity for both legs) and a **per-year performance** table (strategy vs buy-hold return + excess) so regime-dependence is visible. A **Summary** section at the top translates the config into English and states the out-of-sample span (derived from the predictions, not the raw data range). Both the top classification metrics and the per-year table show **base_logloss** (the no-skill floor = entropy of the base rate) beside log loss, and the comparison/per-year tables green/red-highlight whichever side wins. The equity curve is marked to market with **1-day-forward returns**, not the N-day classification target — see Gotchas.
+8. **Cross-run results log** (`packages/lidr_core/src/lidr_core/eval/results_log.py`) — `append_run()` appends one row per backtest to `artifacts/results_log.csv` (skill score, full-OOS + per-period log loss with base-rate floors, strategy vs benchmark CAGR/Sharpe/max-drawdown, excess) so "did this change help?" is answerable without opening every HTML report. Opt out per-config with `output.results_log: false`; defaults to true. `dev_synthetic.yaml` sets it false so the smoke test (run on every push/PR) doesn't pollute the tracked CSV with synthetic rows — `packages/ta_ensemble/tests/test_pipeline_smoke.py` asserts the file size doesn't grow.
+9. **Artifact contract + leaderboard** (`packages/lidr_core/src/lidr_core/contract/`, `packages/lidr_core/src/lidr_core/eval/leaderboard.py`) — `contract/writer.py::build_artifact` assembles the schema_version: 2 payload (`model_id`, `model_version`, `config_name`, `ticker`, `metrics`, `predictions[].{date,recommendation,probability_up,y_pred,y_true}`); `write_artifact` validates against `contract/schema/artifact.schema.json` before writing. `leaderboard.py::write_manifest` scans `artifacts/predictions/<model_id>/` and emits `artifacts/manifest.json` so lidr can discover every produced model + its headline OOS skill score.
 
-Everything is wired together by `src/lidr_ml/pipeline.py::run_pipeline(config_path)`.
+Everything for the TA model is wired together by `packages/ta_ensemble/src/ta_ensemble/pipeline.py::run_pipeline(config_path)`.
 
 ## Folder map
 
 ```
-configs/                  experiment configs (YAML, one per run)
-  baseline.yaml           SPY, 2005–today, SMA crossover + logistic regression
-  baseline_six_signals.yaml  same as baseline but all six signals — the edge-gate checkpoint (still loses)
-  dev_synthetic.yaml      same as baseline but synthetic data — offline-safe smoke test
+packages/
+  lidr_core/                            shared harness — owned once, reused by every model
+    pyproject.toml
+    src/lidr_core/
+      backtest/engine.py                expanding-window walk-forward backtester + strategy returns
+      data/loaders.py                   yfinance + synthetic OHLCV loader (with on-disk pickle cache)
+      models/                           generic learners; reused by every model
+        logistic.py                     sklearn logistic regression wrapper
+        lightgbm.py                     LightGBM classifier wrapper
+        __init__.py                     MODEL_REGISTRY + build_model(spec)
+      eval/
+        metrics.py                      classification_metrics, strategy_metrics,
+                                        by_year, performance_by_year
+        report.py                       HTML report generator (base64-embedded chart)
+        results_log.py                  appends one row per run to artifacts/results_log.csv
+        leaderboard.py                  scans artifacts/predictions/<model_id>/ → writes manifest.json
+      contract/
+        schema/artifact.schema.json     formalized schema_version: 2 contract
+        writer.py                       build_artifact + write_artifact (validates on write)
+        loader.py                       load_artifact (validates on read)
+      protocols/
+        signal.py                       SignalFn protocol (was lidr_ml.signals.base)
+        model.py                        Model protocol (was lidr_ml.models.base)
+        feature.py                      Feature protocol (Task 2 placeholder)
+        datasource.py                   DataSource protocol (Task 2 placeholder)
+    tests/
+      test_backtest_engine.py           guards the shared backtest engine
+      test_strategy_returns.py          guards the 1-day-forward equity-curve rule
+  ta_ensemble/                          today's six-signal TA model — depends on lidr_core
+    pyproject.toml
+    configs/                            experiment configs (YAML, one per run)
+      baseline.yaml                     SPY, 2005–today, SMA crossover + logistic regression
+      baseline_six_signals.yaml         all six signals — edge-gate checkpoint (loses)
+      baseline_six_signals_unweighted.yaml  same, no class_weight; parity-baseline for Task 1
+      baseline_six_signals_lightgbm.yaml    LightGBM checkpoint
+      dev_synthetic.yaml                offline-safe smoke test (results_log opt-out)
+    src/ta_ensemble/
+      __init__.py
+      __main__.py                       entry for `python -m ta_ensemble`
+      cli.py                            Typer CLI (`backtest <config>`, `list-signals`)
+      pipeline.py                       end-to-end orchestrator — calls lidr_core for harness work
+      signals/
+        registry.py                     name → signal-callable lookup
+        sma_crossover.py / rsi.py / macd.py / bollinger.py / breakout.py / volume.py
+                                        ports of lidr's lib/signals/*.ts
+    tests/
+      conftest.py                       shared `synthetic_prices` fixture
+      test_no_lookahead.py              asserts every registered signal is lookahead-safe
+      test_signal_accuracy.py           element-wise correctness + hand-derived spot checks
+      test_pipeline_smoke.py            runs dev_synthetic config end-to-end
+  news_sentiment/                       placeholder shell — filled by Task 2
+    pyproject.toml  README.md
+    src/news_sentiment/__init__.py
 data/
-  raw/                    cached OHLCV pulled from yfinance
-src/lidr_ml/
-  __init__.py
-  __main__.py             entry for `python -m lidr_ml`
-  cli.py                  Typer CLI
-  pipeline.py             end-to-end orchestrator
-  data/
-    loaders.py            yfinance + synthetic loader
-  signals/
-    base.py               Signal protocol
-    registry.py           name → signal-callable lookup
-    sma_crossover.py      ported from lidr's lib/signals/sma.ts
-    rsi.py                ported from lidr's lib/signals/rsi.ts (Wilder smoothing)
-    macd.py               ported from lidr's lib/signals/macd.ts (normalized histogram)
-    bollinger.py          ported from lidr's lib/signals/bollinger.ts (z-score)
-    breakout.py           ported from lidr's lib/signals/breakout.ts (position in 252-day range)
-    volume.py             ported from lidr's lib/signals/volume.ts (volume ratio vs 50-day avg)
-  models/
-    base.py               Model protocol
-    logistic.py           sklearn logistic regression wrapper
-  backtest/
-    engine.py             expanding-window walk-forward backtester + strategy returns
-  eval/
-    metrics.py            classification_metrics (accuracy / base_rate / pred_rate / log_loss / base_logloss),
-                          strategy_metrics (cagr / sharpe / max_drawdown / final_equity),
-                          by_year + performance_by_year breakdowns
-    report.py             HTML report generator (base64-embedded chart)
-    results_log.py        appends one row per run to artifacts/results_log.csv
-reports/                  generated HTML reports (gitignored except .gitkeep)
+  raw/                                  cached OHLCV pulled from yfinance
+reports/                                generated HTML reports (gitignored except .gitkeep)
 artifacts/
-  models/                 (planned) final trained model — NOT yet written; backtest models are throwaway
-  predictions/            JSON predictions consumed by lidr
-  results_log.csv         cross-run results log (one row per backtest, tracked in git)
-tests/
-  conftest.py             shared `synthetic_prices` fixture
-  test_no_lookahead.py    asserts every registered signal is lookahead-safe
-  test_signal_accuracy.py element-wise signal correctness + spot checks on arithmetic series
-  test_strategy_returns.py guards the equity-curve return rule (1-day-forward, costs charged)
-  test_pipeline_smoke.py  runs dev_synthetic config end-to-end
+  results_log.csv                       cross-run results log (one row per backtest, tracked in git)
+  manifest.json                         leaderboard — one entry per model_id with latest artifact + skill
+  predictions/<model_id>/<config>-<timestamp>.json
+                                        v2 artifacts written here, one subdir per model
 docs/
-  signals.md              first-time-reader explainer for all six registered signals
-  signals/                per-signal PNG charts embedded by signals.md (SPY, full history)
-  sample-report/report.html committed sample of the HTML backtest report
-.github/workflows/
-  test.yml                CI: `make test` + `make lint` on every push / PR
+  adr/0001-multi-model-repo-architecture.md  the keystone decision + schema-v2 design (durable)
+  research/data-sources.md                   news/sentiment source comparison (durable)
+  plans/task-2-news-sentiment-model.md       Task 2 kickoff (disposable, deleted on Task 2 merge)
+  signals.md                                 first-time-reader explainer for the six TA signals
+  signals/                                   per-signal PNG charts embedded by signals.md
+  sample-report/report.html                  committed sample of the HTML backtest report
+pyproject.toml                          root: ruff + pytest config, dev install only — no top-level package
+Makefile                                make install / backtest / test / lint / clean
+.github/workflows/test.yml              CI: installs all packages editable, then `make test` + `make lint`
 ```
 
 ## Conventions (read before writing code)
 
 - **`main` is protected — all changes land via PR.** Direct pushes are blocked. Workflow: branch → commit → push → `gh pr create` → wait for green CI → `gh pr merge --squash --delete-branch`. Full procedure in [CONTRIBUTING.md → Workflow](CONTRIBUTING.md#workflow). Unlike the sibling lidr project there is no Vercel preview here — CI passing is the only required gate, because lidr-ml doesn't auto-deploy anywhere.
-- **Python ≥3.10**, src-layout package; ruff for lint + format (`line-length = 100`, `target-version = "py310"`). Snake_case modules and functions.
-- **Signals are pure functions**: `(prices: DataFrame, params: dict) → Series` aligned to the input index. Conform to `signals/base.py::SignalFn`. Must be lookahead-safe — `f(prices[:t])[t] == f(prices)[t]`.
-- **Models conform to `models/base.py::Model`**: three methods — `fit(X, y) -> None`, `predict_proba(X) -> np.ndarray` (shape `(n_samples, n_classes)`), and `predict(X) -> np.ndarray`.
-- **When adding a signal, three things must land in the same PR**:
-  1. Register in `signals/registry.py`.
-  2. Add to the `SIGNAL_CASES` table in `tests/test_no_lookahead.py` (the lookahead test is non-negotiable).
-  3. Add an `ACCURACY_CASES` entry in `tests/test_signal_accuracy.py` — a 5-tuple `(name, params, reference_fn, prices_factory, spot_checks)`. The `reference_fn` should be a *structurally different* implementation of the same algorithm (e.g., loop-based numpy reference vs the signal's vectorized pandas path) so a shared bug between signal and reference is unlikely. The `prices_factory` returns the price fixture used for the layer-2 spot checks (typically chosen so the expected values are derivable by hand without running code; ≥2 spot checks required). The layer-1 element-wise tolerance is `rtol=1e-8`.
+- **Python ≥3.10**, src-layout packages under `packages/`; ruff for lint + format (`line-length = 100`, `target-version = "py310"`). Snake_case modules and functions.
+- **`lidr_core` is the harness; per-model packages depend on it. Never the other way around.** If a piece of logic is reused by more than one model (eval, contract, backtest engine, base learners, data loaders), it lives in `lidr_core`. Model-specific signals/features/configs/pipelines live in the model's package.
+- **Signals are pure functions**: `(prices: DataFrame, params: dict) → Series` aligned to the input index. Conform to `lidr_core.protocols.signal.SignalFn`. Must be lookahead-safe — `f(prices[:t])[t] == f(prices)[t]`.
+- **Models conform to `lidr_core.protocols.model.Model`**: three methods — `fit(X, y) -> None`, `predict_proba(X) -> np.ndarray` (shape `(n_samples, n_classes)`), and `predict(X) -> np.ndarray`.
+- **Artifacts are validated on write.** Every produced `predictions/<model_id>/*.json` must validate against `lidr_core/contract/schema/artifact.schema.json`; `write_artifact` enforces this. Breaking schema changes bump `schema_version`; additive optional fields don't. New models must populate `model_id` + `model_version` in config; the writer reads them from there.
+- **When adding a signal, three things must land in the same PR** (the signal lives in its owning model's package, e.g. `ta_ensemble/signals/`):
+  1. Register in `ta_ensemble/signals/registry.py`.
+  2. Add to the `SIGNAL_CASES` table in `packages/ta_ensemble/tests/test_no_lookahead.py` (the lookahead test is non-negotiable).
+  3. Add an `ACCURACY_CASES` entry in `packages/ta_ensemble/tests/test_signal_accuracy.py` — a 5-tuple `(name, params, reference_fn, prices_factory, spot_checks)`. The `reference_fn` should be a *structurally different* implementation of the same algorithm (e.g., loop-based numpy reference vs the signal's vectorized pandas path) so a shared bug between signal and reference is unlikely. The `prices_factory` returns the price fixture used for the layer-2 spot checks (typically chosen so the expected values are derivable by hand without running code; ≥2 spot checks required). The layer-1 element-wise tolerance is `rtol=1e-8`.
 - **Outcome-changing PRs need verification evidence in the PR description.** PRs that affect what the pipeline outputs (signal ports, model updates, scoring/calibration changes, JSON-artifact schema changes) need a `## Summary` section explaining the change in plain English plus an embedded chart and dated sanity-check table from real SPY data. For signal ports, also cite a max-absolute-difference number vs lidr's TS implementation. Refactors, doc-only changes, and infra/CI changes don't need this. **Mechanics:** `scripts/verify_<thing>.py` generates `docs/_pr_evidence/<thing>/chart.png` + `evidence.md`, committed to the branch then **removed in a final commit before squash-merge** so `main` stays free of review artifacts; the chart URL in the PR description pins to a commit SHA via `raw.githubusercontent.com` so it survives branch deletion. **Always get the full 40-char SHA from `git rev-parse <short>` and paste it verbatim — do not type SHA hex from memory or extend a short SHA by hand.** The raw URL needs an exact-match SHA or it returns 404; the first 7 chars looking right is not enough. PR #15 shipped with two broken chart URLs because the trailing 33 hex chars were typed from memory; caught only when the user clicked through. See PRs #5 / #7 / #8 / #9 / #10 (the five signal ports of 2026-05-27) for the template.
 - **Backtests use expanding-window walk-forward only.** Random k-fold leaks information across time and is rejected on sight.
 - **Transaction costs are modeled in every backtest.** Default 5 bps; configurable but never zero in a config that gets compared to buy-and-hold.
 - **Every report must show a benchmark.** Strategy metrics rendered beside buy-and-hold; log loss rendered beside `base_logloss` (the no-skill floor). New comparison columns get appended to the *right* of existing benchmark columns.
 - **Errors at config boundaries are `NotImplementedError`** with a message naming the unsupported value (see `pipeline.py` for the pattern). Internal invariants use `assert` or raise `ValueError`. No silent fallbacks.
 - **CI runs `make test` + `make lint` on every push** (`.github/workflows/test.yml`). Don't merge red.
-- **Refresh the committed sample report when report formatting changes.** If a PR touches `src/lidr_ml/eval/report.py`, `src/lidr_ml/eval/metrics.py`, or `configs/baseline.yaml`, run `make refresh-sample-report` and include the updated `docs/sample-report/report.html` (and the new `artifacts/results_log.csv` row that the run appends) in the same commit. Keeps the README's "Example report" link in sync with the headline SPY baseline numbers. Requires internet (yfinance).
+- **Refresh the committed sample report when report formatting changes.** If a PR touches `packages/lidr_core/src/lidr_core/eval/report.py`, `packages/lidr_core/src/lidr_core/eval/metrics.py`, or `packages/ta_ensemble/configs/baseline.yaml`, run `make refresh-sample-report` and include the updated `docs/sample-report/report.html` (and the new `artifacts/results_log.csv` row that the run appends) in the same commit. Keeps the README's "Example report" link in sync with the headline SPY baseline numbers. Requires internet (yfinance).
 
 See **Gotchas** below for the past failures that motivated several of these rules.
 
@@ -133,7 +163,7 @@ See **Gotchas** below for the past failures that motivated several of these rule
 Strategic forks in the road — *why we chose X over Y*. For procedural rules see Conventions; for things that bit us see Gotchas.
 
 - **One Python project, separate from lidr.** Considered as a folder inside lidr; rejected because Python venvs + Node modules in one tree gets messy fast and the two pieces deploy on different cadences (Vercel vs. eventually Railway/Render). The deliberate seam is the JSON artifact.
-- **Source of truth for signal logic stays in lidr until cutover.** Each Python signal in `src/lidr_ml/signals/` is a *port* of the corresponding TS signal in lidr's `lib/signals/`; numerical parity is tested so the two implementations don't drift. When the calibrated model goes live, we'll decide whether the TS versions get deleted, kept as fallback, or only used for display.
+- **Source of truth for signal logic stays in lidr until cutover.** Each Python signal in `packages/ta_ensemble/src/ta_ensemble/signals/` is a *port* of the corresponding TS signal in lidr's `lib/signals/`; numerical parity is tested so the two implementations don't drift. When the calibrated model goes live, we'll decide whether the TS versions get deleted, kept as fallback, or only used for display.
 - **Synthetic data fallback is part of the contract.** The `dev_synthetic` config lets the pipeline run with no network — makes CI, tests, and Cowork-sandbox verification trivial. Not just a dev convenience; the existence of an offline-runnable config is load-bearing for the test suite.
 - **Outputs to lidr are calibrated probabilities, not heuristics.** Today lidr's confidence values are normalized strength scores (heuristics). The whole point of this project is to replace them with `predict_proba` calibrated via Platt or isotonic regression. (The current baseline's probabilities are *not* calibrated — see Gotchas re: `class_weight="balanced"` — so the calibration step is required before any artifact goes live.)
 - **The backtest does NOT produce a deployable model.** Expanding-window walk-forward fits a fresh model per split, predicts that split's test slice, and discards it — the deliverable is the stitched out-of-sample prediction series, used only for evaluation. There is no single trained model and nothing is written to `artifacts/models/`. Fitting + serializing a deployable model is a separate not-yet-built step (on the roadmap, edge-gated).
@@ -142,12 +172,12 @@ Strategic forks in the road — *why we chose X over Y*. For procedural rules se
 
 Non-obvious things that bit us. Each entry earned its place by causing a real problem.
 
-- **The equity curve runs on 1-day-forward returns, not the N-day classification target.** Compounding the N-day return on every daily row counts the same window ~N times and inflates final equity by an order of magnitude. See `pipeline.py::run_pipeline` (`daily_fwd_return` is the equity input; `fwd_clean` is the classifier target only) and `tests/test_strategy_returns.py`, which is what makes sure the bug stays fixed.
-- **Python 3.14 has no parquet wheels yet.** `data/loaders.py` caches OHLCV in pickle, not parquet. Don't "fix" the loader by switching back to parquet without verifying `pyarrow`/`fastparquet` wheels exist for the target Python — the comment at `loaders.py:50` documents why.
-- **Typer collapses single-command apps into a flat CLI.** Removing `list-signals` from `cli.py` would silently break `python -m lidr_ml backtest <config>` (Typer would re-flatten the entry point). Don't remove `list-signals` until a third real command lands.
+- **The equity curve runs on 1-day-forward returns, not the N-day classification target.** Compounding the N-day return on every daily row counts the same window ~N times and inflates final equity by an order of magnitude. See `packages/ta_ensemble/src/ta_ensemble/pipeline.py::run_pipeline` (`daily_fwd_return` is the equity input; `fwd_clean` is the classifier target only) and `packages/lidr_core/tests/test_strategy_returns.py`, which is what makes sure the bug stays fixed.
+- **Python 3.14 has no parquet wheels yet.** `lidr_core/data/loaders.py` caches OHLCV in pickle, not parquet. Don't "fix" the loader by switching back to parquet without verifying `pyarrow`/`fastparquet` wheels exist for the target Python — the comment at `loaders.py:50` documents why.
+- **Typer collapses single-command apps into a flat CLI.** Removing `list-signals` from `ta_ensemble/cli.py` would silently break `python -m ta_ensemble backtest <config>` (Typer would re-flatten the entry point). Don't remove `list-signals` until a third real command lands.
 - **`yfinance` only has currently-listed tickers** — survivorship bias. Fine for SPY/QQQ/sector ETFs; suspicious for individual-name backtests. Don't trust individual-stock results without a CRSP-style source.
 - **`class_weight="balanced"` in the baseline is actively harmful, not just "distorts probabilities."** Empirically (2026-05-27 sanity check, see Recent Changes): removing it on the six-signal logistic config shrank the distance from no-skill baseline ~7× (`skill_score` -0.0374 → -0.0051). The reweighting was forcing confidently-wrong predictions on a 60/40 problem. Removing it makes the model "predict ≈base_rate every day" (a no-skill baseline), which is mechanically aggregate-calibrated but useless to lidr because there's no day-to-day variation. **Default new configs to `class_weight=None`**; revisit only if a future model class shows genuine class-balance trouble. Calibration via Platt/isotonic is still needed for shipping any probability artifact to lidr (on the roadmap: calibration).
-- **`artifacts/results_log.csv` rows from before 2026-05-27 are slightly off.** The expanding-window backtester used an inclusive right endpoint on the test slice, so the boundary date between split N and split N+1 (`test_end` of N == `test_start` of N+1) was predicted twice and double-compounded in the equity curve. ~0.3% of rows affected; tiny effect on every metric (`accuracy`, `log_loss`, `skill_score`, `cagr`, `sharpe`, `n_oos`). Fixed by making the right endpoint exclusive except on the final split — see `backtest/engine.py::expanding_window_backtest` and `tests/test_backtest_engine.py`. Pre-fix rows weren't re-run; treat any cross-row comparison that straddles 2026-05-27 with this in mind.
+- **`artifacts/results_log.csv` rows from before 2026-05-27 are slightly off.** The expanding-window backtester used an inclusive right endpoint on the test slice, so the boundary date between split N and split N+1 (`test_end` of N == `test_start` of N+1) was predicted twice and double-compounded in the equity curve. ~0.3% of rows affected; tiny effect on every metric (`accuracy`, `log_loss`, `skill_score`, `cagr`, `sharpe`, `n_oos`). Fixed by making the right endpoint exclusive except on the final split — see `lidr_core/backtest/engine.py::expanding_window_backtest` and `packages/lidr_core/tests/test_backtest_engine.py`. Pre-fix rows weren't re-run; treat any cross-row comparison that straddles 2026-05-27 with this in mind.
 
 ## Next Up
 
@@ -166,26 +196,48 @@ Cross-references to Next Up items use names, not numbers — see Maintenance Ins
 3. **Add a final-model fit + serialize step.** The backtest only evaluates (throwaway per-split models); nothing fits a model on all data or writes `artifacts/models/`. Before serving live predictions, fit one model on all available history, serialize it, and write the prediction artifact. Trigger: once a model beats buy-and-hold.
 4. **Calibrate `predict_proba` via Platt or isotonic regression.** *Empirically validated as a needed step by the LightGBM PR diagnostics (2026-05-27):* wrapping LightGBM in `CalibratedClassifierCV(isotonic, cv=3)` moved its skill_score from -0.148 to -0.004. Raw LightGBM probabilities are confidently miscalibrated; calibration is required before any probability artifact ships to lidr. Logistic regression's `predict_proba` is closer to calibrated out of the box but should also be wrapped for consistency.
 5. **Migrate the output from binary to 3-class (BUY / HOLD / SELL).** Today's target is binary (`fwd_return > 0`). The project's stated deliverable is 3-class. Two paths: (a) post-hoc bucketing of the calibrated probability into BUY / HOLD / SELL bands, (b) reformulate the target itself (e.g., three quantile bins of `fwd_return`). Decision punt until a binary model with edge exists; the 3-class formulation changes how "beats buy-and-hold" is measured.
-6. **Evolve the artifact JSON schema as lidr's needs firm up.** Schema is already implemented at `schema_version: 1` (see `pipeline.py:174-189`: `config_name`, `ticker`, `generated_at`, `metrics.{classification,strategy,benchmark}`, `predictions[].{date,y_true,y_pred,probability_up}`). Bump the version when lidr's `/api/signals/[ticker]` is ready to consume it and any fields need to change (per-signal contributions, BUY/HOLD/SELL class labels from the 3-class migration, etc.).
+6. **Evolve the artifact JSON schema as lidr's needs firm up.** Schema is formalized at `schema_version: 2` in `packages/lidr_core/src/lidr_core/contract/schema/artifact.schema.json` and produced via `lidr_core.contract.writer.build_artifact` / `write_artifact`. Fields: `schema_version`, `model_id`, `model_version`, `config_name`, `ticker`, `generated_at`, `metrics.{classification,strategy,benchmark}`, `predictions[].{date,recommendation,probability_up,y_pred,y_true}`. Bump the version on a *breaking* change (removing/renaming a field, changing a type); additive optional fields do not need a bump. Likely additions before lidr starts consuming: per-signal/feature contributions for explainability.
 7. **Wire lidr's `/api/signals/[ticker]` to read the artifact.** That's the bridge moment. Coordinate with the lidr CLAUDE.md.
 8. **Wire up MLflow for experiment tracking.** Replace the timestamped-folder report + CSV log with proper logged runs and a comparison UI. *Deferred: the existing `artifacts/results_log.csv` covers the "did this help?" need until the run count is large enough to justify the heavier tooling.*
 
 ## Active Task
 
-_Nothing currently in-flight._
+**Task 1 (restructure) done in this PR; Task 2 (news-sentiment model) is the next handoff.** With the monorepo and the schema-v2 contract in place, `news_sentiment` can be filled in without touching `ta_ensemble`. See [`docs/plans/task-2-news-sentiment-model.md`](docs/plans/task-2-news-sentiment-model.md) — has a Claude Code kickoff prompt. Also still on the board:
 
-Primed for next session: **Target/feature reformulation (Next Up #1).** Pick one of three directions; recommendation is **(a) longer horizon first** because it's the cheapest to test and most directly answers "is the 5d-sign target too noisy?" If it doesn't move skill_score, that's evidence the bottleneck is feature-side (in which case (c) regime features is the next try). If it does move skill_score, that retargets the rest of the roadmap around magnitudes/horizons rather than sign.
+Parked alternative (pre-existing, still valid): **Target/feature reformulation (Next Up #1).** Pick one of three directions; recommendation is **(a) longer horizon first** because it's the cheapest to test and most directly answers "is the 5d-sign target too noisy?" If it doesn't move skill_score, that's evidence the bottleneck is feature-side (in which case (c) regime features is the next try). If it does move skill_score, that retargets the rest of the roadmap around magnitudes/horizons rather than sign.
 
-- **(a) Longer horizon (recommended first).** Clone `configs/baseline_six_signals_unweighted.yaml` → `baseline_six_signals_20d_unweighted.yaml` with `target.horizon_days: 20`. Also clone the LightGBM config the same way. Backtest both. The chart to make is **skill_score vs horizon** for both model classes (1d, 5d, 10d, 20d, 60d) — would settle whether the bottleneck is "target horizon too noisy" cleanly.
-- **(b) Return-magnitude regression.** Bigger lift. New `target.type: forward_return_regression`, new regressor wrapper (`models/lightgbm_regressor.py` or sklearn's `Ridge`), revised `Model` protocol or a sibling `RegressionModel` protocol, and a different evaluation path (RMSE / R² in place of accuracy / log_loss). The strategy rule itself becomes a question: long when predicted return > threshold? Long-short? Worth doing only if (a) shows promise — regression on a still-noisy target is doubly hard.
-- **(c) Regime features.** Add VIX (`^VIX`), 10y yield (`^TNX`), realized vol. Requires extending `data/loaders.py` to fetch additional tickers and align them to the SPY index. Adds 3 features without changing the target. Conceptually most likely to add information; mechanically biggest change to the data layer.
+- **(a) Longer horizon (recommended first).** Clone `packages/ta_ensemble/configs/baseline_six_signals_unweighted.yaml` → `baseline_six_signals_20d_unweighted.yaml` with `target.horizon_days: 20`. Also clone the LightGBM config the same way. Backtest both. The chart to make is **skill_score vs horizon** for both model classes (1d, 5d, 10d, 20d, 60d) — would settle whether the bottleneck is "target horizon too noisy" cleanly.
+- **(b) Return-magnitude regression.** Bigger lift. New `target.type: forward_return_regression`, new regressor wrapper (`lidr_core/models/lightgbm_regressor.py` or sklearn's `Ridge`), revised `Model` protocol or a sibling `RegressionModel` protocol, and a different evaluation path (RMSE / R² in place of accuracy / log_loss). The strategy rule itself becomes a question: long when predicted return > threshold? Long-short? Worth doing only if (a) shows promise — regression on a still-noisy target is doubly hard.
+- **(c) Regime features.** Add VIX (`^VIX`), 10y yield (`^TNX`), realized vol. Requires extending `lidr_core/data/loaders.py` to fetch additional tickers and align them to the SPY index. Adds 3 features without changing the target. Conceptually most likely to add information; mechanically biggest change to the data layer.
 
-Concrete first step (if pursuing (a)): in a new branch, write `configs/baseline_six_signals_20d_unweighted.yaml` and `configs/baseline_six_signals_20d_lightgbm.yaml`, run both, append rows to results_log.csv, plot skill_score and per-period strategy returns for the 4 configs (5d-vs-20d × 2 models). PR with the chart + per-period table as evidence per the outcome-changing-PR convention.
+Concrete first step (if pursuing (a)): in a new branch, write `packages/ta_ensemble/configs/baseline_six_signals_20d_unweighted.yaml` and `packages/ta_ensemble/configs/baseline_six_signals_20d_lightgbm.yaml`, run both, append rows to results_log.csv, plot skill_score and per-period strategy returns for the 4 configs (5d-vs-20d × 2 models). PR with the chart + per-period table as evidence per the outcome-changing-PR convention.
 
 <!-- Update this section when work is in progress. Replace with `_Nothing currently in-flight._`
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-27 — Repo restructure into the `lidr-models` monorepo (Task 1 shipped)
+
+Mechanical, no-behavior-change restructure that executes the plan from the 2026-05-27 planning session. `src/lidr_ml/` is gone; the code now lives in three packages under `packages/`:
+
+- **`lidr_core`** — the shared harness: backtest engine, eval (metrics, report, results_log, the new `leaderboard.py`), data loaders, generic learners (logistic + LightGBM), and the new `contract/` (artifact JSON Schema + writer + loader + the new `Feature` / `DataSource` protocols).
+- **`ta_ensemble`** — the six TA signals + their pipeline + their configs. Today's only complete model. Depends on `lidr_core`; CLI is now `python -m ta_ensemble backtest <config>`.
+- **`news_sentiment`** — empty shell, README points at the Task 2 plan.
+
+Imports updated repo-wide (no `lidr_ml.*` left). All moves used `git mv` so file history is preserved. Each package owns its own `pyproject.toml`; root `pyproject.toml` is now dev-tool-only. `make install` installs all three editable. CI workflow updated to do the same. Configs gain `model_id: ta_ensemble` + `model_version` so produced artifacts identify their model family.
+
+**Artifact contract formalized at `schema_version: 2`** in `lidr_core/contract/schema/artifact.schema.json`. v1's implicit dict is replaced by `build_artifact` + `write_artifact` which validates against the schema before writing (via `jsonschema`; falls back to a narrow in-tree check if not installed). Predictions now land under `artifacts/predictions/<model_id>/` so multiple models don't collide, and a top-level `artifacts/manifest.json` leaderboard is generated by `leaderboard.write_manifest` (picks the latest artifact per model by mtime, not lex filename order — a `dev_synthetic` file sorts after `baseline_*` alphabetically and the lex version silently picked the wrong "latest").
+
+**Parity gate passed.** Re-ran `baseline_six_signals_unweighted.yaml` before (run_id `20260527-183934`) and after (run_id `20260527-190244`) the moves: `skill_score = -0.005104`, `cagr = 0.142454`, `n_oos = 3851`, and every other metric column in `results_log.csv` matches bit-for-bit between the two rows. The relocation didn't perturb the pipeline. Tests: 24 / 24 passing; lint clean across the three packages.
+
+**Workflow notes worth keeping.** The plan doc `docs/plans/task-1-repo-restructure.md` was deleted as the final step of this PR (mirrors the PR-evidence cleanup habit — squash-merge collapses the add+delete pair so `main` stays free of execution-plan churn); the durable docs (ADR 0001, `docs/research/data-sources.md`, Task 2 plan) stay. The GitHub repo *URL* is still `pavarit/lidr-ml`; renaming it is a UI-only step that can be done later without touching the code.
+
+### 2026-05-27 — Planning: multi-model architecture + news-sentiment model (docs only, no code)
+
+Planning-only session in Cowork. The project framework firmed up: `lidr` is the front-end; multiple *competing* models will feed it recommendations through the JSON artifact. Decided to reorganize around the contract rather than around models — rename `lidr-ml` → `lidr-models` and split it into a `lidr_core` shared harness (backtest, eval, results_log, the formalized artifact contract, and the Signal/Model/Feature/DataSource protocols) plus per-model packages (`ta_ensemble` = today's six-signal pipeline; `news_sentiment` = the new model). Rationale, alternatives, and the designed-for-change requirements (swappable data sources / features / model; easy iterate-and-compare loop) are in `docs/adr/0001-multi-model-repo-architecture.md`.
+
+Wrote four planning docs under `docs/` (adr/, research/, plans/) — see the Active Task section for the index. No code moved; the restructure and the model build are handed off to Claude Code as Task 1 (mechanical, parity-gated restructure) and Task 2 (news-sentiment model, blocked by Task 1), each with a kickoff prompt embedded in its plan doc. Doc hygiene by design: the **ADR** (which now also holds the artifact-contract schema-v2 design, folded in from a separate doc) and **`docs/research/data-sources.md`** are durable knowledge and stay; the two **`docs/plans/` docs are disposable** and instruct Claude Code to delete themselves in the cleanup commit once their task merges (mirroring the existing PR-evidence cleanup habit), so the repo doesn't accumulate stale execution plans. Also captured verified news/sentiment data-source research (free-tier status + paid pricing + leverage call; decision to trial Tiingo News at ~$10/mo) in `docs/research/data-sources.md` so it's not re-derived later. When Task 1 executes, this repo's folder map, Stack, and Conventions sections will need updating to match the new monorepo layout.
 
 ### 2026-05-27 — LightGBM checkpoint: still no edge, and the model class is not the bottleneck
 

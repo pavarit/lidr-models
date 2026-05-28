@@ -1,0 +1,62 @@
+# Six-signal logistic baseline WITHOUT class_weight=balanced.
+# Sanity check before moving to LightGBM: does the negative skill_score
+# verdict from baseline_six_signals reflect a genuine signal weakness, or
+# is it a `class_weight=balanced` artifact distorting predict_proba?
+# (See Gotchas in CLAUDE.md re: balanced reweighting and calibration.)
+
+name: baseline_six_signals_unweighted
+model_id: ta_ensemble
+model_version: 0.2.0
+description: |
+  Same as baseline_six_signals.yaml except `class_weight` is omitted
+  (sklearn default = None, no reweighting). All other knobs identical
+  so the only delta is the class_weight handling.
+
+data:
+  source: yfinance
+  tickers: [SPY]
+  start_date: 2005-01-01
+  end_date: 2026-05-01
+
+signals:
+  - name: sma_crossover
+    params:
+      fast: 50
+      slow: 200
+  - name: rsi
+    params:
+      period: 14
+  - name: macd
+    params:
+      fast: 12
+      slow: 26
+      signal: 9
+  - name: bollinger
+    params:
+      period: 20
+  - name: breakout
+    params:
+      period: 252
+  - name: volume
+    params:
+      period: 50
+
+target:
+  type: forward_return_binary
+  horizon_days: 5
+  threshold: 0.0
+
+model:
+  type: logistic_regression
+  params:
+    C: 1.0
+    # class_weight omitted → sklearn default None (no rebalancing).
+
+backtest:
+  cv: expanding_window
+  initial_train_years: 5
+  test_period_months: 12
+  transaction_cost_bps: 5
+
+output:
+  predictions_json: true
