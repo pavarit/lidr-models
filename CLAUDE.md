@@ -172,9 +172,14 @@ Cross-references to Next Up items use names, not numbers — see Maintenance Ins
 
 ## Active Task
 
-_Nothing currently in-flight._
+**Planning done; execution handed off to Claude Code (planning-only session 2026-05-27).** The project is becoming a multi-model robo-advisor: `lidr` (front-end) consuming recommendations from several *competing* models. Plan: rename this repo `lidr-ml` → **`lidr-models`** and restructure it into a research monorepo (`lidr_core` shared harness + per-model packages `ta_ensemble` and `news_sentiment`), with the JSON artifact promoted to a formal, validated, versioned contract. Full plan in `docs/`:
 
-Primed for next session: **Target/feature reformulation (Next Up #1).** Pick one of three directions; recommendation is **(a) longer horizon first** because it's the cheapest to test and most directly answers "is the 5d-sign target too noisy?" If it doesn't move skill_score, that's evidence the bottleneck is feature-side (in which case (c) regime features is the next try). If it does move skill_score, that retargets the rest of the roadmap around magnitudes/horizons rather than sign.
+- `docs/adr/0001-multi-model-repo-architecture.md` — the keystone decision + structure, including the evolved artifact contract (`schema_version: 2` with `model_id`, `model_version`, `manifest.json` leaderboard). Read first.
+- `docs/research/data-sources.md` — verified free/paid news+sentiment data sources; decision to trial Tiingo (~$10/mo).
+- `docs/plans/task-1-repo-restructure.md` — **Task 1** (mechanical, no-behavior-change restructure; parity-gated). Has a Claude Code kickoff prompt.
+- `docs/plans/task-2-news-sentiment-model.md` — **Task 2** (build the news-sentiment model; blocked by Task 1). Has a kickoff prompt.
+
+Parked alternative (pre-existing, still valid): **Target/feature reformulation (Next Up #1).** Pick one of three directions; recommendation is **(a) longer horizon first** because it's the cheapest to test and most directly answers "is the 5d-sign target too noisy?" If it doesn't move skill_score, that's evidence the bottleneck is feature-side (in which case (c) regime features is the next try). If it does move skill_score, that retargets the rest of the roadmap around magnitudes/horizons rather than sign.
 
 - **(a) Longer horizon (recommended first).** Clone `configs/baseline_six_signals_unweighted.yaml` → `baseline_six_signals_20d_unweighted.yaml` with `target.horizon_days: 20`. Also clone the LightGBM config the same way. Backtest both. The chart to make is **skill_score vs horizon** for both model classes (1d, 5d, 10d, 20d, 60d) — would settle whether the bottleneck is "target horizon too noisy" cleanly.
 - **(b) Return-magnitude regression.** Bigger lift. New `target.type: forward_return_regression`, new regressor wrapper (`models/lightgbm_regressor.py` or sklearn's `Ridge`), revised `Model` protocol or a sibling `RegressionModel` protocol, and a different evaluation path (RMSE / R² in place of accuracy / log_loss). The strategy rule itself becomes a question: long when predicted return > threshold? Long-short? Worth doing only if (a) shows promise — regression on a still-noisy target is doubly hard.
@@ -186,6 +191,12 @@ Concrete first step (if pursuing (a)): in a new branch, write `configs/baseline_
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-27 — Planning: multi-model architecture + news-sentiment model (docs only, no code)
+
+Planning-only session in Cowork. The project framework firmed up: `lidr` is the front-end; multiple *competing* models will feed it recommendations through the JSON artifact. Decided to reorganize around the contract rather than around models — rename `lidr-ml` → `lidr-models` and split it into a `lidr_core` shared harness (backtest, eval, results_log, the formalized artifact contract, and the Signal/Model/Feature/DataSource protocols) plus per-model packages (`ta_ensemble` = today's six-signal pipeline; `news_sentiment` = the new model). Rationale, alternatives, and the designed-for-change requirements (swappable data sources / features / model; easy iterate-and-compare loop) are in `docs/adr/0001-multi-model-repo-architecture.md`.
+
+Wrote four planning docs under `docs/` (adr/, research/, plans/) — see the Active Task section for the index. No code moved; the restructure and the model build are handed off to Claude Code as Task 1 (mechanical, parity-gated restructure) and Task 2 (news-sentiment model, blocked by Task 1), each with a kickoff prompt embedded in its plan doc. Doc hygiene by design: the **ADR** (which now also holds the artifact-contract schema-v2 design, folded in from a separate doc) and **`docs/research/data-sources.md`** are durable knowledge and stay; the two **`docs/plans/` docs are disposable** and instruct Claude Code to delete themselves in the cleanup commit once their task merges (mirroring the existing PR-evidence cleanup habit), so the repo doesn't accumulate stale execution plans. Also captured verified news/sentiment data-source research (free-tier status + paid pricing + leverage call; decision to trial Tiingo News at ~$10/mo) in `docs/research/data-sources.md` so it's not re-derived later. When Task 1 executes, this repo's folder map, Stack, and Conventions sections will need updating to match the new monorepo layout.
 
 ### 2026-05-27 — LightGBM checkpoint: still no edge, and the model class is not the bottleneck
 
