@@ -10,7 +10,7 @@ Three packages under `packages/`:
 
 - **`lidr_core`** — the shared harness (backtest engine, eval/metrics, results_log + leaderboard, artifact JSON Schema + writer/loader, protocols, base data loaders, generic learners).
 - **`ta_ensemble`** — the six TA signals + pipeline. Today's only complete model.
-- **`news_sentiment`** — placeholder shell, to be built in Task 2.
+- **`news_sentiment`** — in development (Task 2 PR-A scaffolding: free data adapters + collector + lexicon scorer + three features + offline dev pipeline). Real backtest and news-vs-TA comparison land in PR-B/C.
 
 See `CLAUDE.md` for the full architecture, design decisions, and roadmap, and [`docs/adr/0001-multi-model-repo-architecture.md`](docs/adr/0001-multi-model-repo-architecture.md) for the rationale behind the monorepo shape.
 

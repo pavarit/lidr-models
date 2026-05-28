@@ -1,8 +1,12 @@
-"""news_sentiment — placeholder.
+"""news_sentiment — a competing model for lidr-models.
 
-This package is intentionally empty. It will be filled in **Task 2**
-(see docs/plans/task-2-news-sentiment-model.md). All logic implemented
-here will depend on lidr_core for backtest/eval/contract.
+Phase-0 scaffolding (PR-A): pluggable free data adapters + collector +
+deterministic lexicon scorer + three features + offline dev pipeline.
+
+FinBERT + LLM scoring and the Tiingo News adapter are stubs; they land in PR-B.
+A real ``news_v0.yaml`` backtest with comparison evidence lands in PR-C.
 """
 
-__version__ = "0.0.0"
+from __future__ import annotations
+
+__version__ = "0.1.0"
