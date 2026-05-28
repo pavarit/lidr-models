@@ -1,29 +1,32 @@
 .PHONY: install backtest test lint format clean clean-reports refresh-sample-report
 
-# Default config if none specified
-CONFIG ?= configs/dev_synthetic.yaml
+# Default config if none specified.
+CONFIG ?= packages/ta_ensemble/configs/dev_synthetic.yaml
 
 # Override on the command line if needed: make backtest PYTHON=python
 PYTHON ?= python3
 
 install:
+	$(PYTHON) -m pip install -e ./packages/lidr_core
+	$(PYTHON) -m pip install -e ./packages/ta_ensemble
+	$(PYTHON) -m pip install -e ./packages/news_sentiment
 	$(PYTHON) -m pip install -e ".[dev]"
 
 backtest:
-	$(PYTHON) -m lidr_ml backtest $(CONFIG)
+	$(PYTHON) -m ta_ensemble backtest $(CONFIG)
 
 test:
 	$(PYTHON) -m pytest
 
 lint:
-	$(PYTHON) -m ruff check src tests
+	$(PYTHON) -m ruff check packages
 
 format:
-	$(PYTHON) -m ruff format src tests
-	$(PYTHON) -m ruff check --fix src tests
+	$(PYTHON) -m ruff format packages
+	$(PYTHON) -m ruff check --fix packages
 
 clean:
-	rm -rf build dist *.egg-info
+	rm -rf build dist *.egg-info packages/*/build packages/*/dist packages/*/*.egg-info
 	rm -rf .pytest_cache .ruff_cache pytest-cache-files-*
 	find . -type d -name __pycache__ -exec rm -rf {} +
 
@@ -34,7 +37,7 @@ clean-reports:
 # docs/sample-report/ so README's "Example report" link stays in sync
 # with the cited headline numbers. Requires internet (yfinance).
 refresh-sample-report:
-	$(PYTHON) -m lidr_ml backtest configs/baseline.yaml
+	$(PYTHON) -m ta_ensemble backtest packages/ta_ensemble/configs/baseline.yaml
 	@latest=$$(ls -1td reports/baseline_v1-*/ | head -n 1) && \
 		cp $$latest/report.html docs/sample-report/report.html && \
 		echo "Refreshed docs/sample-report/report.html from $$latest"

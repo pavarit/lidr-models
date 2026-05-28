@@ -10,9 +10,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
+      - name: Install workspace packages
+        run: |
+          pip install -e ./packages/lidr_core
+          pip install -e ./packages/ta_ensemble
+          pip install -e ./packages/news_sentiment
+          pip install -e ".[dev]"
       - name: Run tests
-        run: make test
+        run: make test PYTHON=python
       - name: Run lint
-        run: make lint
+        run: make lint PYTHON=python

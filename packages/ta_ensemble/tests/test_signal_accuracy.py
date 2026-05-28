@@ -1,0 +1,480 @@
+"""Accuracy tests for ta_ensemble signals.
+
+Validates that each registered signal produces mathematically correct values via
+two independent checks:
+
+  1. Element-wise comparison against a simple inline reference formula (obvious
+     by inspection — catches wrong min_periods, wrong normalization, wrong formula).
+
+  2. Spot checks against hand-derived expected values on a known synthetic price
+     series, where the values can be verified without running any code.
+
+When porting a new signal, add one ACCURACY_CASES entry with both a reference_fn
+and at least two spot_checks before merging.  For complex smoothing algorithms
+(RSI, MACD), the reference_fn should be a structurally-different reimplementation
+of the same algorithm so a shared bug between signal and reference is unlikely;
+spot checks are then the independent ground truth.
+
+The ``synthetic_prices`` fixture used by ``test_signal_matches_reference`` is
+defined in ``tests/conftest.py``.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+import pytest
+from ta_ensemble.signals import get_signal
+
+# Importing the package triggers signal registration via signals/__init__.py.
+
+
+# ---------------------------------------------------------------------------
+# Helpers — price fixtures used for hand-derived spot checks.
+# ---------------------------------------------------------------------------
+
+
+def arithmetic_prices(n: int = 100) -> pd.DataFrame:
+    """Return a price DataFrame with close = [100, 101, ..., 100+n-1].
+
+    The values are exact integers (cast to float), so every SMA is the
+    arithmetic mean of a consecutive integer range and can be computed as
+    ``(first + last) / 2`` without a calculator.
+    """
+    close = pd.Series(range(100, 100 + n), dtype=float)
+    return pd.DataFrame({"close": close})
+
+
+def zigzag_prices(n: int = 30) -> pd.DataFrame:
+    """Return a price series with deltas alternating +2, -1, +2, -1, ...
+
+    Starting at close[0] = 100, this gives close = [100, 102, 101, 103, 102,
+    104, 103, ...]. For RSI with period=14, the seed window covers exactly
+    7 gains of 2 and 7 losses of 1 (avg_gain=1.0, avg_loss=0.5, RS=2.0),
+    making the seeded value derivable by hand.
+    """
+    deltas = np.tile([2.0, -1.0], (n + 1) // 2)[: n - 1]
+    close = np.concatenate([[100.0], 100.0 + np.cumsum(deltas)])
+    return pd.DataFrame({"close": close})
+
+
+def constant_prices(n: int = 60, value: float = 100.0) -> pd.DataFrame:
+    """Return a price DataFrame with all closes equal to ``value``.
+
+    Useful for MACD spot checks: with constant input, every EMA equals
+    ``value`` exactly, so macd_line = signal_line = histogram = 0, and the
+    normalized feature is 0 / value = 0 at every post-warmup index.
+    """
+    return pd.DataFrame({"close": pd.Series([value] * n, dtype=float)})
+
+
+def volume_spike_prices() -> pd.DataFrame:
+    """Constructed close+volume fixture for volume signal spot checks.
+
+    Layout (20 rows, period=10):
+        indices  0..8  → volume = 10  (baseline)
+        index    9     → volume = 20  (the spike — heavy volume day)
+        indices 10..19 → volume = 10  (return to baseline)
+
+    The close column is unused by the volume signal but required by the
+    DataFrame shape; we fill it with 100.
+
+    Hand-derived ratios at key indices (window = trailing 10 values
+    *including* today; ratio = today_volume / window_mean):
+        idx 9:  window = [10]*9 + [20].          mean = 110/10 = 11.   ratio = 20/11
+        idx 10: window = [10]*8 + [20, 10].      mean = 110/10 = 11.   ratio = 10/11
+        idx 19: window = [10]*10.                mean = 10.            ratio = 1.0
+    """
+    volumes = np.array([10.0] * 9 + [20.0] + [10.0] * 10)
+    closes = np.full(20, 100.0)
+    return pd.DataFrame({"close": closes, "volume": volumes})
+
+
+def step_prices() -> pd.DataFrame:
+    """Constructed step-price fixture for breakout spot checks.
+
+    Layout (30 rows):
+        indices  0..9   → close = 100
+        indices 10..14  → close = 110
+        indices 15..19  → close = 105
+        indices 20..24  → close = 100
+        indices 25..29  → close = 110
+
+    With period=20, the rolling window's min is always 100 and max is always
+    110 at indices 19, 24, and 29 — varying only the *current* close so the
+    feature (close − low) / (high − low) lands at three distinct positions
+    in [0, 1] that are derivable by hand:
+
+        idx 19 → close=105 → feature = (105-100)/(110-100) = 0.5  (mid)
+        idx 24 → close=100 → feature =     0 / 10           = 0.0  (at low)
+        idx 29 → close=110 → feature =    10 / 10           = 1.0  (at high)
+    """
+    close = np.concatenate(
+        [
+            np.full(10, 100.0),
+            np.full(5, 110.0),
+            np.full(5, 105.0),
+            np.full(5, 100.0),
+            np.full(5, 110.0),
+        ]
+    )
+    return pd.DataFrame({"close": close})
+
+
+# ---------------------------------------------------------------------------
+# Reference implementations for non-trivial signals.
+# ---------------------------------------------------------------------------
+
+
+def _rsi_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
+    """Reference RSI implementation — structurally different from the signal.
+
+    Operates on ``np.diff(close)`` (length n-1, no prepended NaN) instead of
+    ``close.diff()``. The recursion math is identical to Wilder's smoothing;
+    a shared bug between this and ``signals/rsi.py`` is unlikely.
+    """
+    period = params["period"]
+    close = prices["close"].to_numpy()
+    n = len(close)
+    diffs = np.diff(close)
+    gains = np.maximum(diffs, 0.0)
+    losses = -np.minimum(diffs, 0.0)
+
+    rsi = np.full(n, np.nan)
+    if n > period:
+        # Output index k corresponds to diffs[k-1]. Seed at output index = period.
+        ag = gains[:period].mean()
+        al = losses[:period].mean()
+        rsi[period] = 100.0 if al == 0.0 else 100.0 - 100.0 / (1.0 + ag / al)
+        for k in range(period + 1, n):
+            ag = (ag * (period - 1) + gains[k - 1]) / period
+            al = (al * (period - 1) + losses[k - 1]) / period
+            rsi[k] = 100.0 if al == 0.0 else 100.0 - 100.0 / (1.0 + ag / al)
+
+    return pd.Series(rsi, index=prices.index)
+
+
+def _volume_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
+    """Reference volume-ratio — loop over windows, no pd.rolling.
+
+    Structurally different from the signal (which uses pd.Series.rolling.mean).
+    Matches lidr's TS contract: today's volume divided by the mean of the
+    trailing ``period`` volumes (window includes today), NaN when window is
+    not yet full.
+    """
+    period = params["period"]
+    vol = prices["volume"].to_numpy()
+    n = len(vol)
+    out = np.full(n, np.nan)
+    for i in range(period - 1, n):
+        window = vol[i - period + 1 : i + 1]
+        avg = window.mean()
+        if avg > 0:
+            out[i] = vol[i] / avg
+    return pd.Series(out, index=prices.index)
+
+
+def _breakout_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
+    """Reference breakout — loop over windows, no pd.rolling.
+
+    Structurally different from the signal's pd.rolling.max/min path so a
+    shared bug is unlikely. Matches lidr's TS contract: position of close
+    inside the N-day [low, high] range, NaN when range is zero or window
+    not yet full.
+    """
+    period = params["period"]
+    close = prices["close"].to_numpy()
+    n = len(close)
+    out = np.full(n, np.nan)
+    for i in range(period - 1, n):
+        window = close[i - period + 1 : i + 1]
+        lo = window.min()
+        hi = window.max()
+        rng = hi - lo
+        if rng > 0:
+            out[i] = (close[i] - lo) / rng
+    return pd.Series(out, index=prices.index)
+
+
+def _bollinger_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
+    """Reference Bollinger z-score — loop over windows, no pd.rolling.
+
+    Structurally different from the signal (which uses pd.Series.rolling).
+    Standard deviation is computed with ``ddof=0`` to match lidr's TS
+    ``meanStd()`` (population std).
+    """
+    period = params["period"]
+    close = prices["close"].to_numpy()
+    n = len(close)
+    out = np.full(n, np.nan)
+    for i in range(period - 1, n):
+        window = close[i - period + 1 : i + 1]
+        mean = window.mean()
+        std = window.std(ddof=0)
+        if std > 0:
+            out[i] = (close[i] - mean) / std
+    return pd.Series(out, index=prices.index)
+
+
+def _macd_reference(prices: pd.DataFrame, params: dict) -> pd.Series:
+    """Reference MACD — explicit loop-based EMA, no pandas operations inside.
+
+    Structurally different from the signal (which uses pd.Series.ewm). The
+    EMA recurrence transcribed here is byte-equivalent to lidr's TS
+    ``ema()`` function in ``lib/signals/macd.ts``.
+    """
+    fast = params["fast"]
+    slow = params["slow"]
+    signal_p = params["signal"]
+    closes = prices["close"].to_numpy()
+    n = len(closes)
+
+    def ema_loop(values: np.ndarray, period: int) -> np.ndarray:
+        k = 2.0 / (period + 1)
+        out = np.empty(len(values))
+        out[0] = values[0]
+        for i in range(1, len(values)):
+            out[i] = values[i] * k + out[i - 1] * (1.0 - k)
+        return out
+
+    fe = ema_loop(closes, fast)
+    se = ema_loop(closes, slow)
+    macd_line = fe - se
+    sig_line = ema_loop(macd_line, signal_p)
+    hist = macd_line - sig_line
+    feature = hist / se
+
+    warmup = slow + signal_p + 5
+    if n >= warmup:
+        feature[: warmup - 1] = np.nan
+    else:
+        feature[:] = np.nan
+    return pd.Series(feature, index=prices.index)
+
+
+# ---------------------------------------------------------------------------
+# ACCURACY_CASES: one tuple per registered signal.
+#
+# Schema: (name, params, reference_fn, prices_factory, spot_checks)
+#
+#   name           — signal key in the registry
+#   params         — parameter dict passed to the signal
+#   reference_fn   — callable(prices, params) -> pd.Series, computed
+#                    independently of the signal implementation
+#   prices_factory — callable() -> pd.DataFrame, the price fixture used for
+#                    the hand-derived spot checks (chosen so the expected
+#                    values fall out without arithmetic)
+#   spot_checks    — list of (positional_index, expected_value) pairs derived
+#                    by hand from prices_factory(); use float("nan") to assert
+#                    a NaN at that index
+# ---------------------------------------------------------------------------
+
+ACCURACY_CASES = [
+    (
+        "sma_crossover",
+        {"fast": 5, "slow": 10},
+        # Reference: direct transcription of the formula in sma_crossover.py.
+        # "How far above/below the slow MA the fast MA sits, as a fraction of
+        # the slow MA."  Deliberately written without importing the signal module
+        # so that an accidental breakage in the signal module is caught here.
+        lambda prices, p: (
+            prices["close"].rolling(p["fast"], min_periods=p["fast"]).mean()
+            - prices["close"].rolling(p["slow"], min_periods=p["slow"]).mean()
+        )
+        / prices["close"].rolling(p["slow"], min_periods=p["slow"]).mean(),
+        arithmetic_prices,
+        # Spot checks on arithmetic_prices (close[i] = 100 + i, step=1).
+        #
+        # For any arithmetic series with step s=1:
+        #   fast_sma[i]  = i - (fast-1)/2   (e.g. 107.0 at i=9, fast=5)
+        #   slow_sma[i]  = i - (slow-1)/2   (e.g. 104.5 at i=9, slow=10)
+        #   fast - slow  = (slow - fast) / 2 = 2.5  (constant for these params)
+        #   signal       = 2.5 / slow_sma[i]
+        #
+        # All values below are derivable with pencil and paper.
+        [
+            (8,  float("nan")),   # slow window not yet full (need 10 rows, only 9 available)
+            (9,  2.5 / 104.5),    # first valid: slow=mean(100..109)=104.5, fast=mean(105..109)=107.0
+            (10, 2.5 / 105.5),    # slow=mean(101..110)=105.5, fast=mean(106..110)=108.0
+            (50, 2.5 / 145.5),    # slow=mean(141..150)=145.5, fast=mean(146..150)=148.0
+        ],
+    ),
+    (
+        "rsi",
+        {"period": 14},
+        _rsi_reference,
+        zigzag_prices,
+        # Spot checks on zigzag_prices (deltas alternating +2, -1, +2, -1, ...).
+        # diff[i] = +2 for odd i, -1 for even i.
+        #
+        # Seed at index 14 covers diff[1..14] = 7 gains of 2 + 7 losses of 1.
+        #   avg_gain[14] = 14/14 = 1.0
+        #   avg_loss[14] =  7/14 = 0.5
+        #   rs[14]       = 2.0
+        #   rsi[14]      = 100 - 100/(1+2) = 200/3
+        #
+        # At index 15, diff[15] = +2 (gain), loss = 0:
+        #   avg_gain[15] = (1.0 * 13 + 2)   / 14 = 15/14
+        #   avg_loss[15] = (0.5 * 13 + 0)   / 14 = 13/28
+        #   rs[15]       = (15/14) / (13/28) = 30/13
+        #   rsi[15]      = 100 - 100/(1 + 30/13) = 3000/43
+        [
+            (13, float("nan")),   # last index before seed (period=14 → seed at idx 14)
+            (14, 200.0 / 3.0),    # seed: avg_gain=1, avg_loss=0.5, rs=2, rsi=66.6667
+            (15, 3000.0 / 43.0),  # first recursion step ≈ 69.7674
+        ],
+    ),
+    (
+        "volume",
+        {"period": 10},
+        _volume_reference,
+        volume_spike_prices,
+        # Spot checks on volume_spike_prices (see fixture docstring for layout).
+        # The 10-day window first sees the volume spike at index 9, then it
+        # rolls through the window in subsequent indices, then drops off.
+        [
+            (8, float("nan")),    # window not yet full (need 10 values, only 9 available)
+            (9, 20.0 / 11.0),     # spike day: window = [10]*9+[20], mean=11, ratio = 20/11
+            (10, 10.0 / 11.0),    # spike rolls into window but isn't today: window mean=11, today=10
+            (19, 1.0),            # spike has rolled out; window all 10s, ratio = 1.0
+        ],
+    ),
+    (
+        "breakout",
+        {"period": 20},
+        _breakout_reference,
+        step_prices,
+        # Spot checks on step_prices (see fixture docstring for layout).
+        # The rolling 20-day [low, high] is locked at [100, 110] at indices
+        # 19, 24, 29, so the feature depends only on close at those points.
+        [
+            (18, float("nan")),       # window not yet full (need 20 rows, only 19 available)
+            (19, 0.5),                # close=105, mid-range: (105-100)/(110-100) = 0.5
+            (24, 0.0),                # close=100, at the low:    0/10 = 0.0
+            (29, 1.0),                # close=110, at the high:  10/10 = 1.0
+        ],
+    ),
+    (
+        "bollinger",
+        {"period": 20},
+        _bollinger_reference,
+        arithmetic_prices,
+        # Spot checks on arithmetic_prices (close[i] = 100 + i).
+        #
+        # For any index k >= 19, the rolling 20-day window is [k-19, ..., k] —
+        # 20 consecutive integers with step 1. Mean = midpoint = (close[k-19]+close[k])/2,
+        # so close[k] - mean = 9.5 (constant in k). Deviations from mean are
+        # ±0.5, ±1.5, ..., ±9.5 — independent of k. Population variance:
+        #
+        #   var = (2 * sum_{j=0..9} (j + 0.5)^2) / 20
+        #       = (2 * (0+1+...+81 + 0+1+...+9 + 10*0.25)) / 20
+        #       = (2 * (285 + 45 + 2.5)) / 20
+        #       = 665 / 20
+        #       = 33.25 = 133/4
+        #
+        #   std = sqrt(133)/2,  z = 9.5 / (sqrt(133)/2) = 19/sqrt(133) ≈ 1.6473.
+        #
+        # So z is identical at every valid index on this fixture — a strong
+        # invariant the signal must reproduce.
+        [
+            (18, float("nan")),     # window not yet full
+            (19, 19.0 / np.sqrt(133.0)),   # first valid value
+            (50, 19.0 / np.sqrt(133.0)),   # middle of the series
+            (99, 19.0 / np.sqrt(133.0)),   # last index
+        ],
+    ),
+    (
+        "macd",
+        {"fast": 12, "slow": 26, "signal": 9},
+        _macd_reference,
+        lambda: constant_prices(n=60, value=100.0),
+        # Spot checks on a constant 100.0 series (close = 100 for 60 days).
+        #
+        # With constant input every EMA equals 100 (the seed is also 100, and the
+        # recurrence ema[i] = 100*k + 100*(1-k) = 100 holds for all i). So
+        # macd_line = 0, signal_line = 0, histogram = 0, normalized = 0/100 = 0
+        # at every index — but the signal NaN-masks the first warmup-1 entries
+        # to mirror lidr's TS minLen check.
+        #
+        # warmup = slow + signal + 5 = 26 + 9 + 5 = 40, so first valid index = 39.
+        [
+            (38, float("nan")),   # last NaN before warmup boundary
+            (39, 0.0),            # first valid post-warmup value
+            (45, 0.0),            # well past warmup, still 0 on constant input
+            (59, 0.0),            # last index
+        ],
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name,params,ref_fn,prices_factory,spot_checks", ACCURACY_CASES)
+def test_signal_matches_reference(
+    name: str,
+    params: dict,
+    ref_fn,
+    prices_factory,
+    spot_checks: list,
+    synthetic_prices: pd.DataFrame,
+) -> None:
+    """Layer 1: signal output must agree element-wise with the inline reference.
+
+    Uses the shared ``synthetic_prices`` fixture (600-day log-normal series)
+    so that numerical edge-cases on real-world-shaped data are also covered.
+    """
+    fn = get_signal(name)
+    actual = fn(synthetic_prices, params)
+    expected = ref_fn(synthetic_prices, params)
+
+    # NaN positions must agree exactly.
+    assert (actual.isna() == expected.isna()).all(), (
+        f"{name}: NaN mask mismatch between signal and reference"
+    )
+
+    # Non-NaN values must match to ~machine precision. The tolerance is set
+    # well below any real-bug threshold but loose enough that two
+    # mathematically-equivalent algorithms (e.g. pandas' streaming rolling.std
+    # vs numpy.std on each window) can disagree at the 1e-11 level without
+    # the test going red.
+    mask = ~actual.isna()
+    np.testing.assert_allclose(
+        actual[mask].to_numpy(),
+        expected[mask].to_numpy(),
+        rtol=1e-8,
+        err_msg=f"{name}: signal diverges from reference formula",
+    )
+
+
+@pytest.mark.parametrize("name,params,ref_fn,prices_factory,spot_checks", ACCURACY_CASES)
+def test_signal_spot_checks(
+    name: str,
+    params: dict,
+    ref_fn,
+    prices_factory,
+    spot_checks: list,
+) -> None:
+    """Layer 2: signal must hit hand-derived expected values at specific indices.
+
+    Each case carries its own ``prices_factory`` so the spot checks can use a
+    price series tuned for hand-derivation — no library or external tool required.
+    """
+    prices = prices_factory()
+    fn = get_signal(name)
+    result = fn(prices, params)
+
+    for idx, expected_val in spot_checks:
+        actual_val = result.iloc[idx]
+        if isinstance(expected_val, float) and np.isnan(expected_val):
+            assert pd.isna(actual_val), (
+                f"{name}: expected NaN at index {idx}, got {actual_val}"
+            )
+        else:
+            np.testing.assert_allclose(
+                actual_val,
+                expected_val,
+                rtol=1e-12,
+                err_msg=f"{name}: wrong value at index {idx}",
+            )

@@ -1,64 +1,72 @@
-# lidr-ml
+# lidr-models
 
 [![CI](https://github.com/pavarit/lidr-ml/actions/workflows/test.yml/badge.svg)](https://github.com/pavarit/lidr-ml/actions/workflows/test.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm--Noncommercial%201.0.0-blue.svg)](LICENSE)
 
-Python ML pipeline that turns the technical signals from [lidr](https://github.com/pavarit/lidr) into empirically calibrated BUY / HOLD / SELL recommendations via backtested ensemble models.
+A Python research monorepo that produces empirically calibrated BUY / HOLD / SELL recommendations for the [lidr](https://github.com/pavarit/lidr) Next.js front-end. Models compete against each other on a shared backtest harness and a shared JSON artifact contract.
 
-This is the data-science sibling of the lidr Next.js app. See `CLAUDE.md` for the full architecture, design decisions, and roadmap.
+Three packages under `packages/`:
+
+- **`lidr_core`** — the shared harness (backtest engine, eval/metrics, results_log + leaderboard, artifact JSON Schema + writer/loader, protocols, base data loaders, generic learners).
+- **`ta_ensemble`** — the six TA signals + pipeline. Today's only complete model.
+- **`news_sentiment`** — placeholder shell, to be built in Task 2.
+
+See `CLAUDE.md` for the full architecture, design decisions, and roadmap, and [`docs/adr/0001-multi-model-repo-architecture.md`](docs/adr/0001-multi-model-repo-architecture.md) for the rationale behind the monorepo shape.
 
 ## Quick start
 
 ```bash
-# One-time setup (creates editable install)
+# One-time setup (installs all three packages editable)
 make install
 
 # Offline smoke test — no internet required, uses synthetic data
-make backtest CONFIG=configs/dev_synthetic.yaml
+make backtest CONFIG=packages/ta_ensemble/configs/dev_synthetic.yaml
 
 # Real backtest — pulls SPY history from yfinance back to 2005
-make backtest CONFIG=configs/baseline.yaml
+make backtest CONFIG=packages/ta_ensemble/configs/baseline.yaml
 ```
 
 Each run drops a self-contained HTML report into `reports/<config-name>-<timestamp>/report.html`. Open it in a browser.
 
-After `make install`, you can also invoke the CLI directly as `python -m lidr_ml backtest <config>` or via the installed console script `lidr-ml backtest <config>`.
+After `make install`, you can also invoke the CLI directly as `python -m ta_ensemble backtest <config>` or via the installed console script `ta-ensemble backtest <config>`.
 
 ## Architecture
 
-One pipeline, top-to-bottom. Everything is invoked from [`src/lidr_ml/pipeline.py::run_pipeline`](src/lidr_ml/pipeline.py):
+One pipeline per model, top-to-bottom — orchestrated from each model's `pipeline.py` but using shared harness code in `lidr_core`. For `ta_ensemble`, the entry point is [`packages/ta_ensemble/src/ta_ensemble/pipeline.py::run_pipeline`](packages/ta_ensemble/src/ta_ensemble/pipeline.py):
 
 ```
-                  configs/<name>.yaml
-                          │
-                          ▼
-  ┌─────────────── pipeline.py::run_pipeline ───────────────┐
-  │                                                          │
-  │   data/loaders.py  →  signals/*.py  →  target builder    │
-  │   (yfinance cached    (SMA crossover    (N-day forward    │
-  │    or synthetic)       today; RSI/MACD   return > thr,    │
-  │                        coming)           binary)          │
-  │                                  │                        │
-  │                                  ▼                        │
-  │                       backtest/engine.py                  │
-  │                       (expanding-window walk-forward;     │
-  │                        fits a fresh model from models/*   │
-  │                        per split — today: logistic reg.)  │
-  │                                  │                        │
-  │                                  ▼                        │
-  │            eval/metrics.py + eval/report.py +             │
-  │            eval/results_log.py                            │
-  └──────────────────────────┬───────────────────────────────┘
-                             │
-        ┌────────────────────┼────────────────────┐
-        ▼                    ▼                    ▼
-   reports/<run>/    artifacts/predictions/   artifacts/
-   report.html       <run>.json (opt-in)      results_log.csv
-   (HTML + chart)    (JSON for lidr)          (one row appended)
+                  packages/<model>/configs/<name>.yaml
+                                  │
+                                  ▼
+  ┌──────────── <model>/pipeline.py::run_pipeline ──────────────┐
+  │                                                              │
+  │  lidr_core.data.loaders  →  <model>/signals/*  →  target     │
+  │  (yfinance cached            (TA signals for                  │
+  │   or synthetic)               ta_ensemble; news/             │
+  │                               sentiment features                │
+  │                               coming in news_sentiment)         │
+  │                                          │                    │
+  │                                          ▼                    │
+  │                          lidr_core.backtest.engine            │
+  │                          (expanding-window walk-forward;      │
+  │                           fits a fresh model from              │
+  │                           lidr_core.models per split)         │
+  │                                          │                    │
+  │                                          ▼                    │
+  │            lidr_core.eval.{metrics, report, results_log}      │
+  │            lidr_core.contract.writer (validates artifact)     │
+  └──────────────────────────────┬───────────────────────────────┘
+                                 │
+        ┌────────────────────────┼─────────────────────────────┐
+        ▼                        ▼                             ▼
+   reports/<run>/    artifacts/predictions/<model_id>/   artifacts/
+   report.html       <run>.json (v2 schema, opt-in)      results_log.csv
+   (HTML + chart)    + artifacts/manifest.json           (one row appended)
+                     (leaderboard)
 ```
 
-**Stack**: Python 3.10+, pandas / numpy, scikit-learn (walk-forward CV + base learners), yfinance for data, PyYAML for configs, Typer for the CLI, Matplotlib for the embedded chart, pytest + ruff for tests + lint.
+**Stack**: Python 3.10+, pandas / numpy, scikit-learn (walk-forward CV + base learners), LightGBM, yfinance for data, PyYAML for configs, Typer for the CLI, jsonschema for contract validation, Matplotlib for the embedded chart, pytest + ruff for tests + lint.
 
 The HTML report contains: a config summary, top-line classification metrics with the no-skill floor (`base_logloss`) beside log loss, the Strategy-vs-Buy&Hold comparison table, the per-year classification breakdown, the per-year strategy-vs-benchmark returns with excess column, and the equity-curve chart. Wins are green/red-highlighted against the benchmark.
 
@@ -91,11 +99,11 @@ The single-signal logistic model **underperforms buy-and-hold on every dimension
 - **Accuracy `0.556` < base rate `0.613`** — predicting "up" every day beats this model on raw correctness.
 - **Pred-rate `0.753` vs base-rate `0.613`** — model predicts "up" 75 % of the time despite reality being 61 %. Strongly biased even with `class_weight="balanced"`.
 
-That's the bar every future model has to clear. Full row in [`artifacts/results_log.csv`](artifacts/results_log.csv); raw artifact at `artifacts/predictions/baseline_v1-20260526-124439.json`.
+That's the bar every future model has to clear. Full row in [`artifacts/results_log.csv`](artifacts/results_log.csv); raw artifact at `artifacts/predictions/ta_ensemble/baseline_v1-20260526-124439.json` (path adjusted after the 2026-05-27 monorepo restructure — older artifacts predate the per-model subdirectory and live directly under `artifacts/predictions/`).
 
 ## CLI
 
-Two commands, available as `python -m lidr_ml <command>` or (after `make install`) `lidr-ml <command>`:
+Two commands, available as `python -m ta_ensemble <command>` or (after `make install`) `ta-ensemble <command>`:
 
 | Command | Args | What it does |
 | --- | --- | --- |
@@ -104,11 +112,13 @@ Two commands, available as `python -m lidr_ml <command>` or (after `make install
 
 ## Config schema
 
-A config is YAML. All fields below are accepted by [`src/lidr_ml/pipeline.py::run_pipeline`](src/lidr_ml/pipeline.py); unrecognized top-level keys are ignored. Two reference examples live in [`configs/`](configs/).
+A config is YAML. All fields below are accepted by [`packages/ta_ensemble/src/ta_ensemble/pipeline.py::run_pipeline`](packages/ta_ensemble/src/ta_ensemble/pipeline.py); unrecognized top-level keys are ignored. Reference examples live in [`packages/ta_ensemble/configs/`](packages/ta_ensemble/configs/).
 
 | Field | Type | Required | Default | Notes |
 | --- | --- | --- | --- | --- |
 | `name` | str | yes | — | Identifies the run; used in report dir name (`reports/<name>-<timestamp>/`) and the `config_name` column of `results_log.csv`. |
+| `model_id` | str | no | `ta_ensemble` | Stable identifier for the producing model family; written into the v2 artifact and used by the leaderboard. |
+| `model_version` | str | no | `0.0.0` | Version of this model's code+config combination; written into the v2 artifact. |
 | `description` | str | no | — | Free text; rendered into the report's Summary section. |
 | `data.source` | str | yes | — | `yfinance` or `synthetic`. `yfinance` requires internet; `synthetic` generates a deterministic geometric-Brownian-motion price series. |
 | `data.tickers` | list[str] | yes | — | Must be a list, but pipeline currently rejects length > 1. Multi-ticker is gated on adding cross-sectional features. |
@@ -121,7 +131,7 @@ A config is YAML. All fields below are accepted by [`src/lidr_ml/pipeline.py::ru
 | `target.type` | str | yes | — | Only `forward_return_binary` is currently supported. |
 | `target.horizon_days` | int | yes | — | N for "was the N-day forward return > `threshold`?" |
 | `target.threshold` | float | no | `0.0` | Return > threshold → class 1, else class 0. |
-| `model.type` | str | yes | — | Only `logistic_regression` is currently supported. |
+| `model.type` | str | yes | — | `logistic_regression` or `lightgbm` (registered in `lidr_core.models`). |
 | `model.params` | dict | no | `{}` | Forwarded to the model class's `__init__`. For logistic, sklearn `LogisticRegression` kwargs (`C`, `class_weight`, …). |
 | `backtest.cv` | str | yes | — | Only `expanding_window` is currently supported. |
 | `backtest.initial_train_years` | int | yes | — | Size of the first training window. |
@@ -138,27 +148,31 @@ Every run writes three things:
 
 Self-contained (chart is base64-embedded; no internet needed to view). Contains a config summary, top-line classification metrics with the no-skill floor (`base_logloss`) beside log loss, Strategy-vs-Buy&Hold comparison table (CAGR, Sharpe, max drawdown, final equity), per-year classification + per-year strategy returns with excess-vs-buy-and-hold, and the equity curve.
 
-### JSON artifact — `artifacts/predictions/<config-name>-<timestamp>.json`
+### JSON artifact — `artifacts/predictions/<model_id>/<config-name>-<timestamp>.json`
 
-Written only when `output.predictions_json: true`. This is what lidr's `/api/signals/[ticker]` will eventually consume. Current shape (`schema_version: 1`), abridged from the live SPY baseline (`artifacts/predictions/baseline_v1-20260526-124439.json`):
+Written only when `output.predictions_json: true`. Built and validated by [`lidr_core.contract.writer`](packages/lidr_core/src/lidr_core/contract/writer.py) against [`artifact.schema.json`](packages/lidr_core/src/lidr_core/contract/schema/artifact.schema.json). This is what lidr's `/api/signals/[ticker]` will eventually consume. Current shape (`schema_version: 2`):
 
 ```json
 {
-  "schema_version": 1,
-  "config_name": "baseline_v1",
+  "schema_version": 2,
+  "model_id": "ta_ensemble",
+  "model_version": "0.2.0",
+  "config_name": "baseline_six_signals_unweighted",
   "ticker": "SPY",
-  "generated_at": "20260526-124439",
+  "generated_at": "20260527-190244",
   "metrics": {
-    "classification": { "accuracy": 0.5565, "base_rate": 0.6134, "pred_rate": 0.7534, "log_loss": 0.6925, "base_logloss": 0.6672, "n_obs": 3914 },
-    "strategy":       { "cagr": 0.0796, "sharpe": 0.6656, "max_drawdown": -0.3375, "final_equity": 3.2847 },
-    "benchmark":      { "cagr": 0.1454, "sharpe": 0.8869, "max_drawdown": -0.3372, "final_equity": 8.2275 }
+    "classification": { "accuracy": 0.6100, "base_rate": 0.6111, "log_loss": 0.6717, "base_logloss": 0.6683, "n_obs": 3851 },
+    "strategy":       { "cagr": 0.1425, "sharpe": 0.9036, "max_drawdown": -0.2671, "final_equity": 7.6497 },
+    "benchmark":      { "cagr": 0.1404, "sharpe": 0.8537, "max_drawdown": -0.3372, "final_equity": 7.4436 }
   },
   "predictions": [
-    { "date": "2010-10-18", "y_true": 1, "y_pred": 0, "probability_up": 0.4999 },
+    { "date": "2010-12-30", "recommendation": "HOLD", "probability_up": 0.51, "y_pred": 1, "y_true": 1 },
     "..."
   ]
 }
 ```
+
+A top-level `artifacts/manifest.json` (built by `lidr_core.eval.leaderboard.write_manifest`) lists every model_id and points to its latest artifact, so lidr can discover what's available.
 
 Bump `schema_version` whenever a field is renamed, removed, or its type changes. Additive changes (new optional fields) don't require a bump.
 
@@ -191,17 +205,18 @@ Single near-term goal: **prove the model has an edge over buy-and-hold** before 
 ## Project layout
 
 ```
-configs/                  experiment configs (YAML, one per run)
-data/raw/                 cached OHLCV pulled from yfinance (regeneratable)
-src/lidr_ml/              the package — pipeline, signals, models, backtest, eval, CLI
-tests/                    pytest suite — lookahead-safety, signal accuracy,
-                          strategy-return invariants, pipeline smoke test
-.github/workflows/        CI (test + lint on every push)
-reports/                  generated HTML reports (gitignored except .gitkeep)
+packages/
+  lidr_core/        shared harness — backtest engine, eval, contract, protocols, base learners
+  ta_ensemble/      the six TA signals + pipeline + configs (today's only complete model)
+  news_sentiment/   placeholder shell — built in Task 2
+data/raw/           cached OHLCV pulled from yfinance (regeneratable)
+docs/               ADR, research, sample report, signal explainer
+.github/workflows/  CI (test + lint on every push)
+reports/            generated HTML reports (gitignored except .gitkeep)
 artifacts/
-  predictions/            JSON predictions consumed by lidr
-  models/                 (planned) final trained model — not yet written
-  results_log.csv         cross-run results log (one row per backtest, git-tracked)
+  predictions/<model_id>/  v2 JSON artifacts (one subdir per model)
+  manifest.json            leaderboard — every model + its latest artifact + OOS skill
+  results_log.csv          cross-run results log (one row per backtest, git-tracked)
 ```
 
 The full per-module breakdown lives in [`CLAUDE.md`](CLAUDE.md) → Folder map.
@@ -209,7 +224,7 @@ The full per-module breakdown lives in [`CLAUDE.md`](CLAUDE.md) → Folder map.
 ## Requirements
 
 - Python 3.10+ (CI tests on 3.11; Python 3.14 works for everything except parquet-based caches — we use pickle on purpose).
-- Internet access for `configs/baseline.yaml` (yfinance). The `dev_synthetic` config runs offline.
+- Internet access for `packages/ta_ensemble/configs/baseline.yaml` (yfinance). The `dev_synthetic` config runs offline.
 
 ## Contributing
 
@@ -224,4 +239,4 @@ In plain English:
 - ✅ Free to use, modify, and share for any **noncommercial** purpose — personal research, education, hobby projects, evaluation, work at a charitable / educational / public-research organization.
 - ❌ **Commercial use requires a separate license** from the copyright holder. This includes running this code as a hosted service, embedding it in a product you sell, or otherwise using it as part of revenue-generating activity.
 
-If you want to use lidr-ml commercially, open a GitHub issue or contact the author directly to discuss licensing.
+If you want to use lidr-models commercially, open a GitHub issue or contact the author directly to discuss licensing.

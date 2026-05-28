@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pavarit/lidr-models/blob/main/packages/lidr_core/src/lidr_core/contract/schema/artifact.schema.json",
+  "title": "lidr-models prediction artifact",
+  "description": "Schema for a versioned JSON artifact produced by one model and consumed by lidr. v2 adds model_id/model_version (multi-model identity) and a per-prediction recommendation field.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "model_id",
+    "model_version",
+    "config_name",
+    "ticker",
+    "generated_at",
+    "metrics",
+    "predictions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2,
+      "description": "Major schema version. Bumped on any breaking change (field removal/rename/type change). Additive optional fields do NOT require a bump."
+    },
+    "model_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Stable identifier for the producing model family (e.g. 'ta_ensemble', 'news_sentiment')."
+    },
+    "model_version": {
+      "type": "string",
+      "description": "Version of this model's code+config combination. Recommended: semver-ish 'MAJOR.MINOR.PATCH'."
+    },
+    "config_name": {
+      "type": "string",
+      "description": "The specific experiment configuration (e.g. 'baseline_six_signals_unweighted'). Distinguishes two runs of the same model_id."
+    },
+    "ticker": {
+      "type": "string",
+      "description": "The asset symbol the predictions are for (e.g. 'SPY')."
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "ISO 8601 / RFC 3339 timestamp marking when this artifact was produced. Also accepts the legacy 'YYYYMMDD-HHMMSS' stamp format for backward compatibility with v1-style timestamps."
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["classification", "strategy", "benchmark"],
+      "additionalProperties": false,
+      "properties": {
+        "classification": {
+          "type": "object",
+          "description": "Classification metrics over the stitched OOS predictions.",
+          "additionalProperties": true
+        },
+        "strategy": {
+          "type": "object",
+          "description": "Strategy (long when y_pred=1) metrics on the OOS equity curve.",
+          "additionalProperties": true
+        },
+        "benchmark": {
+          "type": "object",
+          "description": "Buy-and-hold reference metrics over the same OOS window.",
+          "additionalProperties": true
+        }
+      }
+    },
+    "predictions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["date", "recommendation", "probability_up", "y_pred"],
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "description": "YYYY-MM-DD trading date."
+          },
+          "recommendation": {
+            "type": "string",
+            "enum": ["BUY", "HOLD", "SELL"],
+            "description": "Human-facing label lidr displays. Derived from probability_up bands today; will come from the 3-class model after that migration. The field exists now so the schema stays stable when that migration lands."
+          },
+          "probability_up": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0,
+            "description": "Calibrated (or in-progress-to-be-calibrated) probability of an up day. The numeric quantity lidr can re-bucket if it disagrees with the model's recommendation bands."
+          },
+          "y_pred": {
+            "type": "integer",
+            "enum": [0, 1],
+            "description": "Hard binary prediction. Today: 1 if model thinks up, 0 if down. Stays in the schema for backtest reproducibility."
+          },
+          "y_true": {
+            "type": ["integer", "null"],
+            "enum": [0, 1, null],
+            "description": "Realized outcome (sign of forward return). null on recent dates whose forward window has not yet resolved."
+          }
+        }
+      }
+    }
+  }
+}

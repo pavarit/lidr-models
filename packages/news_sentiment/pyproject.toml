@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "news-sentiment"
+version = "0.0.0"
+description = "News-sentiment model for lidr-models — Task 2 placeholder. See docs/plans/task-2-news-sentiment-model.md."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Boon Boonyasirichok" }]
+license = { text = "PolyForm-Noncommercial-1.0.0" }
+dependencies = [
+    "lidr-core",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
