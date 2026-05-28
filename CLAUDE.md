@@ -138,7 +138,7 @@ Makefile                                make install / backtest / test / lint / 
 
 ## Conventions (read before writing code)
 
-- **`main` is protected — all changes land via PR.** Direct pushes are blocked. Workflow: branch → commit → push → `gh pr create` → wait for green CI → `gh pr merge --squash --delete-branch`. Full procedure in [CONTRIBUTING.md → Workflow](CONTRIBUTING.md#workflow). Unlike the sibling lidr project there is no Vercel preview here — CI passing is the only required gate, because lidr-ml doesn't auto-deploy anywhere.
+- **`main` is protected — all changes land via PR.** Direct pushes are blocked. Workflow: branch → commit → push → `gh pr create` → wait for green CI → `gh pr merge --squash --delete-branch`. Full procedure in [CONTRIBUTING.md → Workflow](CONTRIBUTING.md#workflow). Unlike the sibling lidr project there is no Vercel preview here — CI passing is the only required gate, because lidr-models doesn't auto-deploy anywhere.
 - **Python ≥3.10**, src-layout packages under `packages/`; ruff for lint + format (`line-length = 100`, `target-version = "py310"`). Snake_case modules and functions.
 - **`lidr_core` is the harness; per-model packages depend on it. Never the other way around.** If a piece of logic is reused by more than one model (eval, contract, backtest engine, base learners, data loaders), it lives in `lidr_core`. Model-specific signals/features/configs/pipelines live in the model's package.
 - **Signals are pure functions**: `(prices: DataFrame, params: dict) → Series` aligned to the input index. Conform to `lidr_core.protocols.signal.SignalFn`. Must be lookahead-safe — `f(prices[:t])[t] == f(prices)[t]`.
