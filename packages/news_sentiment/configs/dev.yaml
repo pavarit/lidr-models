@@ -1,0 +1,68 @@
+# Offline smoke test — exercises the full news_sentiment pipeline on synthetic
+# prices + synthetic news items. No internet, no API keys. Do not interpret
+# the metrics from this run as meaningful (synthetic news is i.i.d. noise).
+
+name: news_dev_synthetic
+model_id: news_sentiment
+model_version: 0.1.0
+description: |
+  Offline-safe smoke test for the news_sentiment pipeline (PR-A).
+  Uses synthetic prices (GBM) + a deterministic synthetic news adapter so
+  the end-to-end path can be exercised without network or credentials.
+  The lexicon scorer is the only "real" scorer wired in PR-A; the FinBERT
+  and LLM scorers stub out until PR-B.
+
+data:
+  source: synthetic
+  tickers: [FAKE]
+  start_date: 2010-01-01
+  end_date: 2026-05-01
+  synthetic:
+    drift_annual: 0.07
+    vol_annual: 0.16
+    seed: 42
+
+news:
+  universe: [FAKE]
+  sources:
+    - name: synthetic
+      params:
+        items_per_day_mean: 2.0
+        positive_share: 0.4
+        negative_share: 0.3
+        seed: 42
+  scorer:
+    name: lexicon
+
+features:
+  - name: sentiment_level
+    params:
+      lookback_days: 5
+  - name: sentiment_momentum
+    params:
+      fast: 3
+      slow: 10
+  - name: abnormal_mention_volume
+    params:
+      baseline_days: 30
+
+target:
+  type: forward_return_binary
+  horizon_days: 5
+  threshold: 0.0
+
+model:
+  type: logistic_regression
+  params:
+    C: 1.0
+
+backtest:
+  cv: expanding_window
+  initial_train_years: 3
+  test_period_months: 12
+  transaction_cost_bps: 5
+
+output:
+  predictions_json: true     # writes a schema-v2 artifact under artifacts/predictions/news_sentiment/
+  refresh_manifest: false    # smoke test shouldn't churn the tracked manifest.json
+  results_log: false         # smoke test must NOT pollute artifacts/results_log.csv

@@ -1,4 +1,4 @@
-.PHONY: install backtest test lint format clean clean-reports refresh-sample-report
+.PHONY: install backtest backtest-news test lint format clean clean-reports refresh-sample-report
 
 # Default config if none specified.
 CONFIG ?= packages/ta_ensemble/configs/dev_synthetic.yaml
@@ -14,6 +14,11 @@ install:
 
 backtest:
 	$(PYTHON) -m ta_ensemble backtest $(CONFIG)
+
+# news_sentiment uses a different CLI module; override CONFIG_NEWS if needed.
+CONFIG_NEWS ?= packages/news_sentiment/configs/dev.yaml
+backtest-news:
+	$(PYTHON) -m news_sentiment backtest $(CONFIG_NEWS)
 
 test:
 	$(PYTHON) -m pytest

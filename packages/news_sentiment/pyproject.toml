@@ -4,15 +4,33 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "news-sentiment"
-version = "0.0.0"
-description = "News-sentiment model for lidr-models — Task 2 placeholder. See docs/plans/task-2-news-sentiment-model.md."
+version = "0.1.0"
+description = "News-sentiment model for lidr-models. Ingests headlines/filings/social posts, scores them, and emits a per-ticker sentiment feature set against the lidr-core harness."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Boon Boonyasirichok" }]
 license = { text = "PolyForm-Noncommercial-1.0.0" }
 dependencies = [
     "lidr-core",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+    "requests>=2.28",
 ]
+
+# Optional extras for the data adapters and scorers that aren't needed for the
+# dev smoke path. Install with e.g. `pip install -e ./packages/news_sentiment[reddit,llm]`.
+# PR-A wires the adapters as real code but lazy-imports the heavy deps so the
+# offline dev path works without any of them; PR-B will turn FinBERT + LLM on.
+[project.optional-dependencies]
+reddit = ["praw>=7.7"]
+trends = ["pytrends>=4.9"]
+scoring = ["transformers>=4.40", "torch>=2.0"]
+llm = ["anthropic>=0.30"]
+
+[project.scripts]
+news-sentiment = "news_sentiment.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -18,7 +18,7 @@ Two-repo setup, deliberately kept separate:
 - **`lidr-models`** (this repo, Python) — a research monorepo that produces the artifacts. Three packages under `packages/`:
   - `lidr_core` — shared harness: backtest engine, eval/metrics, results_log + leaderboard, the JSON artifact contract (schema + writer + loader), the `SignalFn` / `Model` / `Feature` / `DataSource` protocols, base data loaders, generic learners (logistic / LightGBM). Owned once, reused by every model.
   - `ta_ensemble` — the six technical-analysis signals + their pipeline. Today's only complete model.
-  - `news_sentiment` — placeholder shell, filled in by Task 2.
+  - `news_sentiment` — Task 2, in development. PR-A (this branch) lands scaffolding + Phase 0 free data adapters (EDGAR / GDELT / Reddit / Google Trends + synthetic) + collector with timestamped on-disk cache + a deterministic lexicon scorer + three lookahead-safe features + an offline dev pipeline. Tiingo News, FinBERT, and the LLM scorer are stubs that raise until PR-B; the real `news_v0.yaml` backtest + comparison evidence is PR-C.
 
 Integration is via JSON files written to `artifacts/predictions/<model_id>/<config>-<timestamp>.json`, validated against the contract on write, plus a top-level `artifacts/manifest.json` leaderboard lidr will use to discover models. Cheap, debuggable, version-controllable. A FastAPI service is on the lidr roadmap and will be added here when the lidr side is ready to consume live predictions.
 
@@ -35,6 +35,8 @@ Integration is via JSON files written to `artifacts/predictions/<model_id>/<conf
 - **Matplotlib** — chart embedded in HTML reports (base64, no internet needed to view)
 - **pytest** — tests
 - **ruff** — lint + format
+- **requests** — HTTP for news adapters (added 2026-05-28 with `news_sentiment` PR-A); EDGAR, GDELT, Tiingo all go through it
+- **Optional extras** (lazy-imported by the relevant adapter — `pip install -e ./packages/news_sentiment[reddit,trends,scoring,llm]`): `praw` (Reddit), `pytrends` (Google Trends), `transformers + torch` (FinBERT, PR-B), `anthropic` (LLM scorer, PR-B). The dev path uses none of these.
 
 Workspace: each package under `packages/<name>/` has its own `pyproject.toml`; the root `pyproject.toml` carries only the dev-tool config (`ruff`, `pytest`) and a meta dev install. `make install` installs all three packages editable so cross-package imports resolve.
 
@@ -42,7 +44,7 @@ Planned but not yet added: **MLflow** (experiment tracking — on the roadmap bu
 
 ## Commands
 
-See [README.md → Quick start](README.md#quick-start) and [README.md → CLI](README.md#cli) for the canonical command reference. Targets: `make install`, `make backtest CONFIG=...`, `make test`, `make lint`, `make clean`, `make clean-reports`. Override the Python interpreter with `PYTHON=` if `python3` isn't right for your environment.
+See [README.md → Quick start](README.md#quick-start) and [README.md → CLI](README.md#cli) for the canonical command reference. Targets: `make install`, `make backtest CONFIG=...` (ta_ensemble), `make backtest-news CONFIG_NEWS=...` (news_sentiment), `make test`, `make lint`, `make clean`, `make clean-reports`. Override the Python interpreter with `PYTHON=` if `python3` isn't right for your environment.
 
 ## How the pipeline works
 
@@ -113,11 +115,42 @@ packages/
       test_no_lookahead.py              asserts every registered signal is lookahead-safe
       test_signal_accuracy.py           element-wise correctness + hand-derived spot checks
       test_pipeline_smoke.py            runs dev_synthetic config end-to-end
-  news_sentiment/                       placeholder shell — filled by Task 2
+  news_sentiment/                       Task 2 model — depends on lidr_core. PR-A: scaffolding + Phase 0
     pyproject.toml  README.md
-    src/news_sentiment/__init__.py
+    configs/
+      dev.yaml                          offline smoke (synthetic prices + synthetic news, lexicon scorer)
+    src/news_sentiment/
+      __init__.py  __main__.py  cli.py  pipeline.py  types.py
+      datasources/
+        base.py                         BaseNewsSource ABC + (start,end) window contract
+        synthetic.py                    deterministic offline items — backs the smoke test
+        edgar.py                        SEC EDGAR full-text/8-K  (free, point-in-time clean)
+        gdelt.py                        GDELT 2.0 DOC API         (free, deep history)
+        reddit.py                       PRAW                       (free, lazy-imports praw, live-only)
+        google_trends.py                pytrends                   (free, lazy-imports pytrends)
+        tiingo.py                       stub — raises until PR-B
+      ingest/collector.py               fan-out, dedup by content_hash, JSONL cache per (ticker,source)
+      scoring/
+        lexicon.py                      Loughran-McDonald-style word counts (PR-A's only real scorer)
+        finbert.py                      stub — raises until PR-B
+        llm.py                          cache + budget cap + spend log scaffolding real; live call PR-B
+        _lm_wordlist.py                 small embedded LM word list
+      features/
+        registry.py  _common.py         registry + items_to_daily + the PIT shift+align helper
+        sentiment_level.py              trailing-window mean of per-item sentiment
+        sentiment_momentum.py           fast-minus-slow trailing sentiment (MACD-shaped)
+        abnormal_mention_volume.py      z-score of item count vs trailing baseline (attention spike)
+    tests/
+      conftest.py                       trading_days + synthetic_scored_items fixtures
+      test_pipeline_smoke.py            runs dev.yaml end-to-end, asserts schema-v2 artifact validates
+      test_no_lookahead.py              every registered news feature is lookahead-safe
+      test_features.py                  hand-derived spot checks per feature
+      test_scoring.py                   lexicon correctness + LLM cache/budget invariants
+      test_datasources.py               registry + synthetic determinism + Tiingo stub
+      test_collector.py                 dedup across runs + timestamp round-trip
 data/
   raw/                                  cached OHLCV pulled from yfinance
+  news/                                 news_sentiment collector cache — JSONL per (ticker, source), gitignored
 reports/                                generated HTML reports (gitignored except .gitkeep)
 artifacts/
   results_log.csv                       cross-run results log (one row per backtest, tracked in git)
@@ -202,7 +235,15 @@ Cross-references to Next Up items use names, not numbers — see Maintenance Ins
 
 ## Active Task
 
-**Task 1 (restructure) done in this PR; Task 2 (news-sentiment model) is the next handoff.** With the monorepo and the schema-v2 contract in place, `news_sentiment` can be filled in without touching `ta_ensemble`. See [`docs/plans/task-2-news-sentiment-model.md`](docs/plans/task-2-news-sentiment-model.md) — has a Claude Code kickoff prompt. Also still on the board:
+**Task 2 — news-sentiment model is in progress; PR-A (scaffolding + Phase 0 free adapters + offline dev path) is open.** Sliced into three PRs because the "first checkpoint" defined in the plan requires paid Tiingo News + Anthropic + Reddit credentials + a FinBERT download that aren't available right now:
+
+- **PR-A (current).** Package scaffolding, the `DataSource` registry with real implementations of the four free adapters (EDGAR / GDELT / Reddit / Google Trends — heavy deps lazy-imported) + a deterministic synthetic source, the collector with timestamped JSONL on-disk cache, the lexicon scorer (zero-dep, deterministic), three lookahead-safe features (sentiment_level, sentiment_momentum, abnormal_mention_volume), the pipeline wiring against `lidr_core`, `dev.yaml` running end-to-end on synthetic prices + synthetic news, schema-v2 artifact validates, lookahead test covers all three news features. FinBERT, LLM scorer, Tiingo are stubs that raise with the next-PR instructions baked into the error message; the LLM scorer's cache + budget cap + spend-log scaffolding is real PR-A code so PR-B drops a live call into known-good cost controls. **No real backtest, no edge claim, no news-vs-TA comparison** — those land in PR-C.
+- **PR-B.** Wire Tiingo News (paid, ~$10/mo), FinBERT (440MB download), and the live LLM call. Need: `TIINGO_API_KEY`, `ANTHROPIC_API_KEY`, `REDDIT_CLIENT_ID/SECRET`. Adds integration tests with recorded fixtures so the adapter parsing is covered without burning real API quota in CI.
+- **PR-C.** `news_v0.yaml` real backtest on a 5–10 ticker universe; appends a `results_log` row; refreshes `manifest.json`; comparison chart + per-period table of news_sentiment vs ta_ensemble vs buy-and-hold per the outcome-changing-PR evidence convention. Deletes [`docs/plans/task-2-news-sentiment-model.md`](docs/plans/task-2-news-sentiment-model.md) in the cleanup commit per the plan's DoD.
+
+Plan doc stays alive until PR-C merges. CLAUDE.md gets the durable framing; the plan carries the per-phase build order.
+
+Also still on the board:
 
 Parked alternative (pre-existing, still valid): **Target/feature reformulation (Next Up #1).** Pick one of three directions; recommendation is **(a) longer horizon first** because it's the cheapest to test and most directly answers "is the 5d-sign target too noisy?" If it doesn't move skill_score, that's evidence the bottleneck is feature-side (in which case (c) regime features is the next try). If it does move skill_score, that retargets the rest of the roadmap around magnitudes/horizons rather than sign.
 
@@ -217,7 +258,29 @@ Concrete first step (if pursuing (a)): in a new branch, write `packages/ta_ensem
 
 ## Recent Changes
 
-### 2026-05-27 — Repo restructure into the `lidr-models` monorepo (Task 1 shipped)
+### 2026-05-28 — Task 2 PR-A: news_sentiment scaffolding + Phase 0 free adapters + offline dev path
+
+Filled in the `news_sentiment` package shell from Task 1 with the structural pieces the rest of Task 2 will bolt logic onto. **No model edge claim**; this PR is the harness that PR-B and PR-C will produce real results through.
+
+**The slice.** Task 2's DoD ("`news_v0.yaml` produces a validated artifact + comparison evidence chart") needs paid Tiingo News, an Anthropic key, Reddit app credentials, and a 440MB FinBERT model download — none of which are available in this session. Confirmed up-front with Boon: ship PR-A only, defer PR-B (paid + heavy scorers) and PR-C (real backtest + comparison) until creds are set up. This means PR-A is *intentionally* structural — every file would be in a one-shot version of Task 2 anyway, but the lines that hit external services raise with the next-PR's required wiring spelled out in the error message rather than failing silently.
+
+**Package shape (~25 new files).** Mirrors `ta_ensemble` so the two models are strictly comparable through `results_log` and the schema-v2 artifact contract. Top-level `pipeline.py` reuses `lidr_core` for backtest, eval, results_log, leaderboard, and contract; the only model-specific pieces are `datasources/`, `ingest/collector.py`, `scoring/`, and `features/`. CLI is `python -m news_sentiment {backtest, list-features, list-sources}`; `Makefile` got a `backtest-news` target.
+
+**Data sources.** Six adapters registered (`synthetic`, `edgar`, `gdelt`, `reddit`, `google_trends`, `tiingo`); five real, one stub. Pattern: every adapter subclasses `BaseNewsSource` and overrides `fetch_raw(ticker, start, end) -> list[NewsItem]`; the base class enforces the `[start, end)` window and sorts by `published_at`. Heavy deps (`praw`, `pytrends`) are lazy-imported inside `fetch_raw` so `pip install -e ./packages/news_sentiment` works without them and only the adapters you actually call need their extras (`[reddit]`, `[trends]`, `[scoring]`, `[llm]`). `TiingoSource.fetch_raw` raises `NotImplementedError("…PR-B…")` with the four steps the next PR needs to land — preferable to a silent no-op that would let a config typo here go unnoticed.
+
+**Collector.** `ingest/collector.py::collect(sources, ticker, start, end, cache_dir)` fans out to each adapter, dedups across sources by `content_hash` (SHA-1 of `source|url|title|body`), and persists raw items to one JSONL file per `(ticker, source)` in `data/news/<config>/<ticker>__<source>.jsonl`. **Point-in-time discipline lives at the cache layer**: items are stored with their `published_at` (true publish timestamp), not the ingestion time, so re-runs can't quietly revise history. The data clock starts whenever PR-B lights up the real adapters — Reddit history can't be backfilled (Pushshift died in 2023), every day of delay is lost training data. `.gitignore` covers `data/news/*` so the smoke run doesn't bloat the repo.
+
+**Scoring.** `LexiconScorer` (Loughran-McDonald-style word counts against a small embedded list) is the only working scorer in PR-A — deterministic, zero-dep, good enough for the dev path. `FinBertScorer` raises until PR-B (instructions baked into the error). `LlmScorer` is **half-real**: the cache (content-hash keyed, on-disk JSONL surviving process restarts), the per-run budget cap (`max_calls`, `max_usd`, raises `LlmBudgetExceeded`), and the spend log (`artifacts/llm_spend.csv`, append-only with token counts + estimated USD) are all functioning PR-A code; only the live Anthropic call is stubbed. Tests in `test_scoring.py` pin that a cache hit consumes zero budget and that the budget cap actually trips. That way PR-B drops the live call into a known-good cost-control harness rather than reinventing one.
+
+**Features.** Three registered + the `_common.items_to_daily` + `align_to_trading_days` helper that mechanises the point-in-time rule. Pattern: items are first daily-aggregated by `published_at.normalize()`, then the aligned trading-day series is **shifted forward by one trading day** so a feature value at trading day `t` can only depend on items published strictly before the start of day `t`. The lookahead test asserts this by re-running each feature on items truncated at the check date — same shape as `ta_ensemble`'s `test_no_lookahead.py`. Features: `sentiment_level` (trailing-window mean of weighted sentiment), `sentiment_momentum` (fast MA minus slow MA), `abnormal_mention_volume` (z-score of daily item count vs 30-day baseline). Each emits a raw continuous quantity — the model learns thresholds, same philosophy as the TA signals.
+
+**Tests.** 20 new tests added; full suite is now 44, all green; lint clean. Smoke test runs the full pipeline on synthetic prices + synthetic news, validates the produced schema-v2 artifact via `lidr_core.contract.loader.load_artifact`, and asserts `output.results_log: false` keeps `artifacts/results_log.csv` from growing (same guard ta_ensemble uses). Lookahead test parametrized over all three news features. Feature spot checks pin the math + the one-day PIT shift (e.g. "one +1 item on day 0 must show at day 1 with lookback=1, then fall out at day 2").
+
+**One bug caught during testing.** First version of `align_to_trading_days` returned `aligned.shift(1)` directly, so position 0 of the trading-day index was NaN, breaking `test_sentiment_level_picks_up_one_day_shift`. Right fix is `shift(1).fillna(0.0)` because semantically "nothing visible yet at the first trading day" should produce 0.0 (same value a no-news day produces), not NaN. Without that, every feature would propagate NaN through the first row of the feature matrix and `dropna` would silently lose the first trading day forever.
+
+**Plan doc stays alive.** `docs/plans/task-2-news-sentiment-model.md` is not deleted in this PR — Task 2's DoD ("delete the plan once the checkpoint merges") refers to PR-C. The CLAUDE.md Active Task section now carries the durable framing (the three-PR slice + what each PR ships); the plan doc keeps the per-phase build order.
+
+
 
 Mechanical, no-behavior-change restructure that executes the plan from the 2026-05-27 planning session. `src/lidr_ml/` is gone; the code now lives in three packages under `packages/`:
 
