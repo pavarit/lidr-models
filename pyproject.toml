@@ -3,7 +3,12 @@
 # Per-package metadata lives in packages/<name>/pyproject.toml. This file is
 # kept minimal — it carries only the shared lint/test config and a `make
 # install` target that pip-installs every package editable. There is no
-# top-level Python package at the repo root.
+# top-level Python package at the repo root; `py-modules = []` tells
+# setuptools not to auto-discover packages from data/, packages/, etc.
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "lidr-models"
@@ -19,6 +24,9 @@ dev = [
     "pytest>=7.4",
     "ruff>=0.4",
 ]
+
+[tool.setuptools]
+py-modules = []
 
 [tool.ruff]
 line-length = 100
