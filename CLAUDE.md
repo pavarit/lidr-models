@@ -173,38 +173,16 @@ Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-mod
 
 ## Recent Changes
 
-### 2026-05-29 — Docs cleanup PR 3: navigation & discoverability (docs only)
+### 2026-05-29 — Documentation-cleanup arc (4 PRs): realign human-facing docs with reality (docs only)
 
-Third of the four-PR docs-cleanup arc (PR 1 = stale facts, [#34](https://github.com/pavarit/lidr-models/pull/34); PR 2 = single-source status, [#35](https://github.com/pavarit/lidr-models/pull/35)). PR 3 makes the docs navigable and moves the best onboarding content out of this AI-facing file. No code touched.
+Four-PR arc that fixed the drift between the human-facing docs (README, ADR, package READMEs) and this changelog, made the doc set navigable, and added artifact-hygiene tooling. The merged plan grouped the work into tiers so each PR was independently reviewable. No production code touched; the only non-doc change is one new Makefile target. (Consolidated from four same-day entries on merge, per the Maintenance fold rule.)
 
-- **New `docs/README.md`** — a one-screen index of `docs/` (durable vs disposable) + a "start here" reading path. `docs/` previously had no map.
-- **New `packages/ta_ensemble/configs/README.md`** — indexes the 17 configs (5 baselines + the 12-file horizon sweep), names the current best (`baseline_six_signals_unweighted`, skill ≈ −0.005), and records that the horizon lever is closed.
-- **Moved "How the pipeline works" into the README** (canonical, human-facing home) and replaced this file's section with a pointer — one-fact-one-place. The 9-step walkthrough was the clearest end-to-end explanation in the repo but was gated behind this long file.
-- **README intro** gained a "New here?" signpost (humans → README + docs index; deep history → CLAUDE.md).
+- **PR 1 — stale facts & dead links ([#34](https://github.com/pavarit/lidr-models/pull/34)).** README "one base model: logistic" → two base learners (logistic + LightGBM); SPY-baseline artifact pointer repointed to the git-tracked `results_log.csv` row (the per-run JSON it named is loose + gitignored, absent on a clone); `news_sentiment/ placeholder shell` → in-development. ADR 0001 Status `Proposed` → `Accepted (Task 1, PR #23)`; fixed the dead `task-1-repo-restructure.md` Execution link; reconciled example `model_version` `2.1.0` → `0.2.0`. `news_sentiment/README.md` got a dated callout flagging the revised PR-B data-source rewire instead of stating the superseded reddit/tiingo plan as current.
+- **PR 2 — single-source the status ([#35](https://github.com/pavarit/lidr-models/pull/35)).** Status was scattered across the README baseline section, Next Up, Active Task, and `manifest.json`, and disagreed. Added a canonical **Current status at a glance** block at the README top (no model beats buy-and-hold yet; bottleneck is features/target, not model class); rewrote *What's next* to the real roadmap; reframed the SPY baseline as the single-signal first bar linked to the snapshot. Next Up now points to the README snapshot as the human-facing headline (one-fact-one-place).
+- **PR 3 — navigation & discoverability ([#36](https://github.com/pavarit/lidr-models/pull/36)).** New `docs/README.md` (durable-vs-disposable index + start-here path) and `packages/ta_ensemble/configs/README.md` (indexes the 17 configs, names the current best, records the closed horizon lever). Moved the 9-step "How the pipeline works" walkthrough into the README as its canonical home with a pointer left here. README intro gained a "New here?" signpost.
+- **PR 4 — artifact hygiene (this PR).** README → Outputs gained a "what's tracked vs. local" table making clear only `results_log.csv` is git-tracked (reports/predictions/manifest are gitignored build outputs, absent on a clone) and documenting the `manifest.json` "latest = mtime" caveat (a smoke run can headline a model). New `make clean-predictions` target (mirrors `clean-reports`; added to `.PHONY`) clears local prediction JSONs + the regenerated manifest. The leaderboard-mtime *code* fix is intentionally separate — it needs a unit test and is a behavior change, so it's its own task next session.
 
-Doc-only; refresh-sample-report not triggered. Recent Changes is at 12 entries — the oldest-5 fold plus consolidating the four same-day cleanup entries is deferred to PR 4. Remaining arc: PR 4 (artifact-hygiene table + `make clean-predictions`) + a separate leaderboard-mtime code fix.
-
-### 2026-05-29 — Docs cleanup PR 2: single-source the project status (docs only)
-
-Second of the four-PR docs-cleanup arc (PR 1 = stale-fact/dead-link fixes, [#34](https://github.com/pavarit/lidr-models/pull/34)). PR 2 fixes the project's *current-status* story, which was scattered across the README baseline section, CLAUDE.md → Next Up / Active Task, Recent Changes, and `manifest.json` — and disagreed. No code touched.
-
-**README.** Added a canonical **Current status at a glance** block at the top (the single human-facing "where is this project now" home): no model beats buy-and-hold yet; six TA signals + logistic/LightGBM all sit at/below the no-skill floor (best `skill_score` ≈ −0.005); bottleneck is the features/target, not the model class; live levers are magnitude-regression target + regime features; news_sentiment in PR-A. Rewrote *What's next* to that real roadmap (the five-signals/LightGBM/horizon-sweep work is done, not upcoming; stacking/serving/calibration/3-class/lidr all gated on edge). Reframed the SPY baseline section as the *single-signal* first bar and linked it to the snapshot so the detailed numbers stay but the conclusion matches the canonical status.
-
-**CLAUDE.md.** Next Up now opens with a pointer to the README snapshot as the human-facing headline status (one-fact-one-place — the detailed priority list stays here, the at-a-glance summary lives in README).
-
-Doc-only, no behavior change → no verification chart; refresh-sample-report not triggered. Remaining arc: PR 3 (docs index + config index + move the pipeline walkthrough into README) and PR 4 (artifact-hygiene table + `make clean-predictions`); a separate leaderboard-mtime code fix follows. (Recent Changes is at 11 entries after this — fold the oldest 5 per the Maintenance rule when the arc wraps.)
-
-### 2026-05-29 — Docs cleanup PR 1: fix stale facts & dead links (docs only)
-
-First of a four-PR documentation-cleanup arc that realigns the human-facing docs (README, ADR, package READMEs) with reality after they drifted behind this changelog. PR 1 is the pure-correction batch — every change fixes a fact that is simply wrong today; no new content or restructuring (those land in PRs 2–4). No code touched.
-
-**README.** "What's in the box" said *one base model: logistic regression* → corrected to *two base learners: logistic + LightGBM* (LightGBM shipped in [PR #20](https://github.com/pavarit/lidr-models/pull/20), and the config-schema table already lists it as a valid `model.type`, so the README contradicted itself). The SPY-baseline artifact pointer claimed the raw JSON lives at `predictions/ta_ensemble/baseline_v1-…json`, but that file is at the loose `predictions/` root *and* is gitignored (absent on a fresh clone) — repointed to the git-tracked `results_log.csv` row, noting per-run JSONs are gitignored build outputs. Project-layout line `news_sentiment/ placeholder shell` → in-development (PR-A scaffolding merged).
-
-**ADR 0001.** Status `Proposed (planning only — no code moved yet)` → `Accepted — implemented in Task 1 (PR #23)`. Fixed the dead Execution link to `../plans/task-1-repo-restructure.md` (deleted on merge) — now states Task 1 shipped in PR #23. Reconciled the example `model_version` (`2.1.0` in two places) with README + live manifest (`0.2.0`).
-
-**news_sentiment/README.md.** The Status section stated the *superseded* data-source plan as current (reddit/google_trends "real," tiingo "stub until PR-B"). The code is legitimately still PR-A, so rather than rewrite the adapter list, added a dated callout flagging the revised PR-B rewire (delete tiingo; reddit + google_trends → permanent stubs; add finnhub/apewisdom/eodhd) pointing at [`docs/research/data-sources.md`](docs/research/data-sources.md) + Active Task; updated the closing "needs Tiingo + Reddit credentials" line to the revised PR-B/PR-C split.
-
-Doc-only, no behavior change → no verification chart, and refresh-sample-report not triggered (none of report.py/metrics.py/baseline.yaml touched). Still to come in this arc: PR 2 (single-source the status narrative), PR 3 (docs index + config index + move the pipeline walkthrough into README), PR 4 (artifact-hygiene table + `make clean-predictions`), plus a separate leaderboard-mtime code fix.
+Doc-only; refresh-sample-report not triggered (no report.py/metrics.py/baseline.yaml touch). Process note: moving large sections via shell file-surgery raced the editor's file-state tracking twice; keep multi-line doc moves inside the Edit tool so tracking stays intact.
 
 ### 2026-05-28 — Fix: backtests crash on a stock Windows console (cp1252 → UTF-8)
 
