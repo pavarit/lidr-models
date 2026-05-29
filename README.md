@@ -170,7 +170,7 @@ Every run writes three things. **Only `results_log.csv` is tracked in git** — 
 | --- | --- | --- | --- |
 | HTML report | `reports/<run>/report.html` | No (gitignored) | One dir per run. Clear with `make clean-reports`. |
 | Prediction JSON | `artifacts/predictions/<model_id>/<run>.json` | No (gitignored) | Written only when `output.predictions_json: true`. Older runs predating the monorepo restructure sit loose under `artifacts/predictions/`. Clear with `make clean-predictions`. |
-| Leaderboard | `artifacts/manifest.json` | No (gitignored) | Regenerated each run from whatever artifacts are on disk. **Caveat:** "latest" is picked by file mtime, so a `dev_synthetic` smoke run can headline a model — don't read it as the authoritative best. (A code fix to the selection rule is tracked separately.) |
+| Leaderboard | `artifacts/manifest.json` | No (gitignored) | Regenerated each run from whatever artifacts are on disk. Each model is headlined by its **most recent real run** (synthetic/`dev_synthetic` smoke runs are excluded; a model with only smoke runs is omitted entirely). "Most recent" is the artifact's embedded `generated_at`, not file mtime. Note this is *latest*, not *best* — after an experiment sweep the headline is whatever config ran last, which may not be the model's best-scoring config. |
 | Results log | `artifacts/results_log.csv` | **Yes** | The durable cross-run record; one row per backtest, accumulates across machines. This is the authoritative "what has been run." |
 
 The three per-run outputs:
@@ -203,7 +203,7 @@ Written only when `output.predictions_json: true`. Built and validated by [`lidr
 }
 ```
 
-A top-level `artifacts/manifest.json` (built by `lidr_core.eval.leaderboard.write_manifest`) lists every model_id and points to its latest artifact, so lidr can discover what's available.
+A top-level `artifacts/manifest.json` (built by `lidr_core.eval.leaderboard.write_manifest`) lists every model_id and points to its latest *real* artifact (smoke runs excluded), so lidr can discover what's available. See [Outputs](#outputs) for the selection rule.
 
 Bump `schema_version` whenever a field is renamed, removed, or its type changes. Additive changes (new optional fields) don't require a bump.
 

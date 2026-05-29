@@ -173,6 +173,22 @@ Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-mod
 
 ## Recent Changes
 
+### 2026-05-29 — Fix: leaderboard headline picks the latest *real* run, not the most-recently-touched file
+
+**A dev_synthetic smoke run can no longer headline a model in `manifest.json`.** This is the root-cause code fix the docs-cleanup arc's PR #37 only documented as a caveat. `build_manifest` (`packages/lidr_core/src/lidr_core/eval/leaderboard.py`) picked each model's headline artifact by `max(..., key=st_mtime)`, so whatever ran last won — and the on-disk manifest was headlining `dev_synthetic` (ticker `FAKE`) for `ta_ensemble`.
+
+**New selection rule (Boon chose both options):** (1) exclude smoke/dev runs from eligibility — an artifact is a smoke run if `config_name` contains `synthetic` *or* `ticker == "FAKE"` (`_is_smoke_artifact`); (2) among real runs, pick the latest by the artifact's embedded `generated_at` (parsed by `_parse_generated_at`, handling both the legacy `YYYYMMDD-HHMMSS` stamp and ISO 8601), falling back to mtime only if unparseable. A model whose *only* artifacts are smoke runs is **omitted entirely** — so `news_sentiment` (only `news_dev_synthetic` runs until PR-C) drops out of the manifest rather than headlining a fake.
+
+**Rejected alternatives:** "best skill_score" (cherry-picks the best-ever run, not the current one; skill can be null) and "just switch mtime→timestamp" (doesn't fix it — dev_synthetic was also the latest by timestamp).
+
+**`latest`, not `best` — a known wrinkle.** After regenerating, `ta_ensemble` now headlines `horizon_h60_lightgbm` (−0.483 skill) because that real config ran most recently in the horizon sweep — not the representative baseline. That's the direct consequence of the chosen "latest real run" semantic; re-running the canonical config last (or revisiting toward a "best" rule) is how you'd change the headline. Recorded so it isn't misread as the model's best result.
+
+**Note: `artifacts/manifest.json` is gitignored** (PR #37) and was never committed — `git ls-files`/`git log` confirm it. So the task's "fix the committed manifest" framing was slightly off; the deliverable is the code + test. The local manifest was regenerated as verification (news_sentiment omitted, ta_ensemble headlines a real SPY run) but doesn't appear in the diff.
+
+**Tests:** new `packages/lidr_core/tests/test_leaderboard.py` (4 tests; there was none before) — pins (a) a real run beats a dev_synthetic that's newer by *both* timestamp and mtime (the exact bad-manifest situation), (b) a smoke-only model is omitted, (c) latest-by-timestamp wins over latest-by-mtime among real runs, (d) skill/beats fields populate from the chosen artifact. Full suite 44 → 48, all green; `ruff check .` clean. Doesn't touch `report.py`/`metrics.py`/`baseline.yaml`, so the refresh-sample-report rule isn't triggered.
+
+**lidr integration impact:** schema unchanged (`schema_version: 2`, same fields), so lidr's reader needs no change. Behavior is strictly more correct: the manifest now lists only models with a real result and headlines a real run. lidr must tolerate a `model_id` being absent from `models[]` (a model with no real run yet) — it already iterates `models[]`, so this is the expected shape, not a breaking change.
+
 ### 2026-05-29 — Documentation-cleanup arc (4 PRs): realign human-facing docs with reality (docs only)
 
 Four-PR arc that fixed the drift between the human-facing docs (README, ADR, package READMEs) and this changelog, made the doc set navigable, and added artifact-hygiene tooling. The merged plan grouped the work into tiers so each PR was independently reviewable. No production code touched; the only non-doc change is one new Makefile target. (Consolidated from four same-day entries on merge, per the Maintenance fold rule.)
