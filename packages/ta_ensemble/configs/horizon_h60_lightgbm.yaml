@@ -1,0 +1,64 @@
+# Horizon spike: LightGBM, target.horizon_days=60.
+# Part of the {5,10,20,60} x {logistic, logistic_weighted, lightgbm} sweep
+# (Next Up: target/feature reformulation, direction (a) -- longer prediction horizon).
+# Identical to baseline_six_signals_lightgbm.yaml except target.horizon_days. The h5 variant of each model
+# class reproduces that source config's committed results_log row (parity anchor).
+
+name: horizon_h60_lightgbm
+model_id: ta_ensemble
+model_version: 0.2.0
+description: |
+  Six-signal LightGBM predicting "60-day forward return > 0" on SPY.
+  Horizon-sweep variant; only target.horizon_days differs from baseline_six_signals_lightgbm.yaml.
+
+data:
+  source: yfinance
+  tickers: [SPY]
+  start_date: 2005-01-01
+  end_date: 2026-05-01
+
+signals:
+  - name: sma_crossover
+    params:
+      fast: 50
+      slow: 200
+  - name: rsi
+    params:
+      period: 14
+  - name: macd
+    params:
+      fast: 12
+      slow: 26
+      signal: 9
+  - name: bollinger
+    params:
+      period: 20
+  - name: breakout
+    params:
+      period: 252
+  - name: volume
+    params:
+      period: 50
+
+target:
+  type: forward_return_binary
+  horizon_days: 60
+  threshold: 0.0
+
+model:
+  type: lightgbm
+  params:
+    n_estimators: 200
+    learning_rate: 0.05
+    num_leaves: 31
+    min_child_samples: 20
+    random_state: 0
+
+backtest:
+  cv: expanding_window
+  initial_train_years: 5
+  test_period_months: 12
+  transaction_cost_bps: 5
+
+output:
+  predictions_json: true

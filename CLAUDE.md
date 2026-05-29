@@ -175,7 +175,7 @@ Priority order, framed around a single near-term goal: **prove the model has an 
 Cross-references to Next Up items use names, not numbers — see Maintenance Instructions for why. Completed items are removed from this section and live in Recent Changes instead.
 
 1. **Reformulate the target or features.** The LightGBM result confirmed the bottleneck is here, not in model capacity. Three concrete directions, ordered roughly by cost-to-test:
-   - **(a) Longer prediction horizon** (5d → 20d). Cheapest: change `target.horizon_days` in a config. The 5-day-sign target is extremely noisy — most weekly moves are noise. A monthly horizon should have a higher signal-to-noise ratio, and the existing TA signals (RSI, MACD, Bollinger) are arguably better matched to weekly/monthly motion than daily.
+   - **(a) Longer prediction horizon** (5d → 20d) — **tested 2026-05-28, negative; this lever is closed.** Swept `horizon_days ∈ {5,10,20,60}` × `{logistic, weighted logistic, LightGBM}` (see Recent Changes → horizon spike). Longer horizons made `skill_score` monotonically *worse* in every model class, not better — the hypothesis that a noisier 5-day target was the problem is refuted. The six TA signals carry no usable directional information at any horizon; lengthening the horizon just raises the base rate (0.61→0.77), lowering the no-skill floor and making it harder to clear. Don't re-run horizon sweeps on this feature set. Remaining live directions are (b) and (c).
    - **(b) Return-magnitude regression target** instead of binary sign. Larger change: requires a new target type in `pipeline.py`, a regressor instead of a classifier, and rethinking `Model` protocol return shape. Lets the model express *how confident* and *how much*, which carries more information than sign alone.
    - **(c) Regime features.** VIX level, yield-curve slope, 60-day realized vol. New feature axes that don't overlap with the six TA signals. Needs multi-ticker support (`^VIX`, `^TNX`) wired into the data loader; partly implementable but not yet exercised.
 2. **Introduce stacking.** Once two base learners exist *with non-zero skill*, add a `StackedModel` whose `fit` trains the base learners via out-of-fold predictions and then trains a meta-learner (logistic regression) on top. **Currently parked** — neither logistic nor LightGBM has skill, so a stacker over them inherits no signal. Revisit after item #1 produces a config that clears the no-skill floor.
@@ -193,13 +193,15 @@ Cross-references to Next Up items use names, not numbers — see Maintenance Ins
 
 **Plan revised 2026-05-28.** PR-A merged (commit `b9ce76a`). The original PR-B plan assumed Reddit (PRAW) + Tiingo News at $10/mo; credential setup found Reddit is blocked by the **Responsible Builder Policy** and Tiingo is $30/mo with only 3 months of news history at that tier. Full revised data-source picture in [`docs/research/data-sources.md`](docs/research/data-sources.md). Boon approved Path 4 (rewire PR-B around the validated stack: EODHD $19.99/mo replacing Tiingo, Apewisdom replacing Reddit's live role, Finnhub free in the backbone, Reddit + Google Trends out as permanent stubs).
 
-**Sequenced as:** (1) **horizon-spike on TA model first** (cheap, free, ~1–2 days — settles the 5d-vs-20d target-noise question that directly shapes `news_v0.yaml`'s horizon choice). (2) **Revised PR-B** wires the new data sources + lights up FinBERT + LLM. (3) **PR-C** runs the real `news_v0.yaml` backtest + comparison.
+**Sequenced as:** (1) ~~horizon-spike on TA model first~~ **done 2026-05-28** — settled the horizon question (see Step 1 below + Recent Changes → horizon spike). (2) **Revised PR-B** (active next) wires the new data sources + lights up FinBERT + LLM. (3) **PR-C** runs the real `news_v0.yaml` backtest + comparison.
 
-### Step 1 — Horizon spike (active next)
+### Step 1 — Horizon spike (done 2026-05-28)
 
-Full spec + Claude Code kickoff prompt in [`docs/plans/horizon-spike.md`](docs/plans/horizon-spike.md). Sweeps `target.horizon_days ∈ {1, 5, 10, 20, 60}` × `{logistic, LightGBM}` on the six-signal TA model → 10 rows in `results_log.csv` + skill_score-vs-horizon chart + per-period table per the outcome-changing-PR evidence convention. Free, no creds. The 5d-vs-20d target-noise question directly shapes `news_v0.yaml`'s `target.horizon_days` for PR-C. Plan doc self-deletes on merge per the disposable-plan-doc convention.
+**Finding: longer horizons don't help — they make it worse.** Swept `target.horizon_days ∈ {5, 10, 20, 60}` × `{logistic, weighted logistic, LightGBM}` (12 configs, 12 new `results_log.csv` rows) on the six-signal TA model. `skill_score` is negative (below the no-skill floor) at every horizon and degrades monotonically as horizon lengthens — h5 is the *least* bad in all three model classes (logistic −0.005 → −0.058; weighted −0.037 → −0.274; LightGBM −0.148 → −0.483). The "5-day target is too noisy" hypothesis is refuted; the six TA signals have no usable directional edge at any horizon. Details + chart in Recent Changes → horizon spike; the closed lever is recorded at Next Up #1(a).
 
-### Step 2 — Revised PR-B (after horizon spike merges)
+**Implication for `news_v0.yaml` (PR-C):** keep `target.horizon_days: 5`. Longer horizons are not the SNR lever they were assumed to be, and a short horizon also matches news's short-lived impact. (Caveat: this verdict is for the TA feature set; news features have different dynamics, so 5d is the starting point, not a proven optimum for news.)
+
+### Step 2 — Revised PR-B (active next)
 
 Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-model.md`](docs/plans/task-2-news-sentiment-model.md). Headline changes from the original PR-B plan: **delete** `tiingo.py`; **convert to permanent stubs** `reddit.py` (Responsible Builder Policy) and `google_trends.py` (pytrends archived 2025-04-17); **add real adapters** `finnhub.py` (free, US company news 1yr + real-time), `apewisdom.py` (free, retail-attention live), `eodhd.py` (paid, $19.99/mo, historical news + per-article sentiment); **drop the Quiver Quant idea from PR-B** — defer to optional later if news side shows promise. FinBERT + live LLM scoring still light up in this PR through PR-A's existing cost-control harness.
 
@@ -211,6 +213,25 @@ Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-mod
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-28 — Horizon spike: longer target horizons make the TA model worse, not better
+
+**Plain result: lengthening the prediction horizon doesn't help — it hurts.** Executed Next Up #1 direction (a). Swept `target.horizon_days ∈ {5, 10, 20, 60}` crossed with three model classes — unweighted logistic, `class_weight=balanced` logistic, and LightGBM — on the six-signal TA model, SPY 2005→2026-05. 12 new configs (`horizon_h{N}_{logistic,logistic_weighted,lightgbm}.yaml`), 12 new `results_log.csv` rows. Boon added weighted logistic as a third class and dropped the original h1 from the plan ({1,5,10,20,60} → {5,10,20,60}).
+
+`skill_score` (= 1 − log_loss/base_logloss, the headline metric — comparable across horizons because it normalizes to each horizon's own base rate) is **negative at every horizon and degrades monotonically as the horizon lengthens**:
+
+| horizon | logistic | weighted | LightGBM |
+|---|---|---|---|
+| 5  | −0.0051 | −0.0374 | −0.1478 |
+| 10 | −0.0114 | −0.0687 | −0.2075 |
+| 20 | −0.0211 | −0.1149 | −0.3169 |
+| 60 | −0.0580 | −0.2739 | −0.4833 |
+
+So **h5 is the least-bad horizon in all three classes**, the opposite of the "5-day target is too noisy, go monthly" hypothesis. Why: the unweighted logistic just predicts the majority class (`pred_rate` ≈ 1.0, accuracy ≈ base rate at every horizon); as the horizon lengthens the base rate climbs 0.61 → 0.77, which *lowers* the no-skill floor (`base_logloss` 0.668 → 0.544), so the model's fixed probability miscalibration becomes a larger fraction of a smaller floor. The six TA signals carry no usable directional information at any horizon — consistent with the LightGBM checkpoint's "features/target is the bottleneck" conclusion, now extended along the horizon axis. Strategy CAGR is reported but is **informational only**: the equity curve marks every position to market on 1-day-forward returns regardless of the classification horizon (see Gotchas), so a high-base-rate config that's ~always-long just tracks buy-and-hold — its excess is exposure, not skill.
+
+**Verification (per the outcome-changing-PR convention):** `scripts/verify_horizon_sweep.py` recomputes every metric *from the prediction-artifact JSONs* (not the logged numbers) and gates on four checks, all PASS: (1) **parity** — each h5 run reproduces its committed source-config row (logistic −0.005104, weighted −0.037443 [the post-dup-fix n_oos-3851 row, not the −0.037582 pre-fix one], LightGBM −0.147833); (2) **chart-vs-log** — recomputed `skill_score` matches `results_log.csv` within 5e-4 (the PR #15 lesson); (3) **n_oos** per config matches; (4) **base_rate** surfaced beside accuracy so the drift can't be misread as skill. Chart + table in `docs/_pr_evidence/horizon_sweep/` (removed in the cleanup commit; chart URL in the PR pinned to the full commit SHA).
+
+**Implication for Task 2:** `news_v0.yaml` keeps `target.horizon_days: 5` (Active Task → Step 1). Closed Next Up #1(a); live target/feature directions are now (b) magnitude-regression target and (c) regime features. Deleted `docs/plans/horizon-spike.md` in the cleanup commit per the disposable-plan-doc convention. One environment note for future Windows runs: the pipeline's `→`-containing print crashes under the cp1252 console codec — run backtests with `PYTHONIOENCODING=utf-8`.
 
 ### 2026-05-28 — CLAUDE.md context-bleed trim, batch 3 of 3: Folder map condensation (docs only)
 
