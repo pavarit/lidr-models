@@ -64,109 +64,42 @@ Everything for the TA model is wired together by `packages/ta_ensemble/src/ta_en
 
 ## Folder map
 
+High-level layout only. **Per-module purpose lives in each module's docstring** — open the file (or `pydoc <module>`) for what it does; nearly every module under `packages/*/src/` carries a one-line docstring. Each package has its own `pyproject.toml`; each has a `tests/` dir whose `conftest.py` holds shared fixtures.
+
 ```
 packages/
-  lidr_core/                            shared harness — owned once, reused by every model
-    pyproject.toml
-    src/lidr_core/
-      backtest/engine.py                expanding-window walk-forward backtester + strategy returns
-      data/loaders.py                   yfinance + synthetic OHLCV loader (with on-disk pickle cache)
-      models/                           generic learners; reused by every model
-        logistic.py                     sklearn logistic regression wrapper
-        lightgbm.py                     LightGBM classifier wrapper
-        __init__.py                     MODEL_REGISTRY + build_model(spec)
-      eval/
-        metrics.py                      classification_metrics, strategy_metrics,
-                                        by_year, performance_by_year
-        report.py                       HTML report generator (base64-embedded chart)
-        results_log.py                  appends one row per run to artifacts/results_log.csv
-        leaderboard.py                  scans artifacts/predictions/<model_id>/ → writes manifest.json
-      contract/
-        schema/artifact.schema.json     formalized schema_version: 2 contract
-        writer.py                       build_artifact + write_artifact (validates on write)
-        loader.py                       load_artifact (validates on read)
-      protocols/
-        signal.py                       SignalFn protocol (was lidr_ml.signals.base)
-        model.py                        Model protocol (was lidr_ml.models.base)
-        feature.py                      Feature protocol (Task 2 placeholder)
-        datasource.py                   DataSource protocol (Task 2 placeholder)
-    tests/
-      test_backtest_engine.py           guards the shared backtest engine
-      test_strategy_returns.py          guards the 1-day-forward equity-curve rule
-  ta_ensemble/                          today's six-signal TA model — depends on lidr_core
-    pyproject.toml
-    configs/                            experiment configs (YAML, one per run)
-      baseline.yaml                     SPY, 2005–today, SMA crossover + logistic regression
-      baseline_six_signals.yaml         all six signals — edge-gate checkpoint (loses)
-      baseline_six_signals_unweighted.yaml  same, no class_weight; parity-baseline for Task 1
-      baseline_six_signals_lightgbm.yaml    LightGBM checkpoint
-      dev_synthetic.yaml                offline-safe smoke test (results_log opt-out)
-    src/ta_ensemble/
-      __init__.py
-      __main__.py                       entry for `python -m ta_ensemble`
-      cli.py                            Typer CLI (`backtest <config>`, `list-signals`)
-      pipeline.py                       end-to-end orchestrator — calls lidr_core for harness work
-      signals/
-        registry.py                     name → signal-callable lookup
-        sma_crossover.py / rsi.py / macd.py / bollinger.py / breakout.py / volume.py
-                                        ports of lidr's lib/signals/*.ts
-    tests/
-      conftest.py                       shared `synthetic_prices` fixture
-      test_no_lookahead.py              asserts every registered signal is lookahead-safe
-      test_signal_accuracy.py           element-wise correctness + hand-derived spot checks
-      test_pipeline_smoke.py            runs dev_synthetic config end-to-end
-  news_sentiment/                       Task 2 model — depends on lidr_core. PR-A: scaffolding + Phase 0
-    pyproject.toml  README.md
-    configs/
-      dev.yaml                          offline smoke (synthetic prices + synthetic news, lexicon scorer)
-    src/news_sentiment/
-      __init__.py  __main__.py  cli.py  pipeline.py  types.py
-      datasources/
-        base.py                         BaseNewsSource ABC + (start,end) window contract
-        synthetic.py                    deterministic offline items — backs the smoke test
-        edgar.py                        SEC EDGAR full-text/8-K  (free, point-in-time clean)
-        gdelt.py                        GDELT 2.0 DOC API         (free, deep history)
-        reddit.py                       PRAW                       (free, lazy-imports praw, live-only)
-        google_trends.py                pytrends                   (free, lazy-imports pytrends)
-        tiingo.py                       stub — raises until PR-B
-      ingest/collector.py               fan-out, dedup by content_hash, JSONL cache per (ticker,source)
-      scoring/
-        lexicon.py                      Loughran-McDonald-style word counts (PR-A's only real scorer)
-        finbert.py                      stub — raises until PR-B
-        llm.py                          cache + budget cap + spend log scaffolding real; live call PR-B
-        _lm_wordlist.py                 small embedded LM word list
-      features/
-        registry.py  _common.py         registry + items_to_daily + the PIT shift+align helper
-        sentiment_level.py              trailing-window mean of per-item sentiment
-        sentiment_momentum.py           fast-minus-slow trailing sentiment (MACD-shaped)
-        abnormal_mention_volume.py      z-score of item count vs trailing baseline (attention spike)
-    tests/
-      conftest.py                       trading_days + synthetic_scored_items fixtures
-      test_pipeline_smoke.py            runs dev.yaml end-to-end, asserts schema-v2 artifact validates
-      test_no_lookahead.py              every registered news feature is lookahead-safe
-      test_features.py                  hand-derived spot checks per feature
-      test_scoring.py                   lexicon correctness + LLM cache/budget invariants
-      test_datasources.py               registry + synthetic determinism + Tiingo stub
-      test_collector.py                 dedup across runs + timestamp round-trip
+  lidr_core/        shared harness — owned once, reused by every model. backtest/ (expanding-window
+                    walk-forward engine + strategy returns), eval/ (metrics, HTML report, results_log,
+                    leaderboard), contract/ (schema_version-2 JSON Schema + writer/loader, validated on
+                    write), data/ (yfinance + synthetic OHLCV loaders), models/ (generic logistic +
+                    LightGBM learners), protocols/ (Signal/Model/Feature/DataSource).
+  ta_ensemble/      today's six-signal TA model; depends on lidr_core. signals/ holds the six pure-function
+                    signals (ports of lidr's lib/signals/*.ts) + registry.py; pipeline.py orchestrates;
+                    configs/ holds YAML experiment configs (incl. baseline.yaml, dev_synthetic.yaml);
+                    cli.py is the `python -m ta_ensemble` entry. tests/ guard lookahead-safety
+                    (test_no_lookahead.py) + signal accuracy (test_signal_accuracy.py).
+  news_sentiment/   Task 2 model (in development); depends on lidr_core. datasources/ (news adapters),
+                    ingest/collector.py (fan-out + dedup + JSONL cache), scoring/ (lexicon + FinBERT/LLM
+                    stubs), features/ (PIT-safe daily features), pipeline.py, configs/dev.yaml offline smoke.
+                    Layout mirrors ta_ensemble so the two models are comparable through results_log + the
+                    artifact contract.
 data/
-  raw/                                  cached OHLCV pulled from yfinance
-  news/                                 news_sentiment collector cache — JSONL per (ticker, source), gitignored
-reports/                                generated HTML reports (gitignored except .gitkeep)
+  raw/              cached OHLCV from yfinance (pickle, never expires — rm data/raw/*.pkl to refresh)
+  news/             news_sentiment collector cache — JSONL per (ticker, source), gitignored
+reports/            generated HTML reports (gitignored except .gitkeep)
 artifacts/
-  results_log.csv                       cross-run results log (one row per backtest, tracked in git)
-  manifest.json                         leaderboard — one entry per model_id with latest artifact + skill
-  predictions/<model_id>/<config>-<timestamp>.json
-                                        v2 artifacts written here, one subdir per model
+  results_log.csv   cross-run results log (one row per backtest, tracked in git)
+  manifest.json     leaderboard — one entry per model_id with latest artifact + skill
+  predictions/<model_id>/<config>-<timestamp>.json   v2 artifacts, one subdir per model
 docs/
-  adr/0001-multi-model-repo-architecture.md  the keystone decision + schema-v2 design (durable)
-  research/data-sources.md                   news/sentiment source comparison (durable)
-  plans/task-2-news-sentiment-model.md       Task 2 kickoff (disposable, deleted on Task 2 merge)
-  signals.md                                 first-time-reader explainer for the six TA signals
-  signals/                                   per-signal PNG charts embedded by signals.md
-  sample-report/report.html                  committed sample of the HTML backtest report
-pyproject.toml                          root: ruff + pytest config, dev install only — no top-level package
-Makefile                                make install / backtest / test / lint / clean
-.github/workflows/test.yml              CI: installs all packages editable, then `make test` + `make lint`
+  adr/              architecture decision records (durable) — 0001 = repo architecture + schema-v2 design
+  research/         durable research — data-sources.md = news/sentiment source comparison
+  plans/            disposable task plans (instruct Claude Code to self-delete on the task's merge)
+  signals.md        first-time-reader explainer for the six TA signals (+ signals/ PNGs)
+  sample-report/    committed sample of the HTML backtest report
+pyproject.toml      root: ruff + pytest config, dev install only — no top-level package
+Makefile            make install / backtest / test / lint / clean
+.github/workflows/test.yml   CI: installs all packages editable, then `make test` + `make lint`
 ```
 
 ## Conventions (read before writing code)
@@ -279,6 +212,16 @@ Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-mod
 
 ## Recent Changes
 
+### 2026-05-28 — CLAUDE.md context-bleed trim, batch 3 of 3: Folder map condensation (docs only)
+
+Final batch of the three-batch context-bleed arc ([batch 1 = PR #29](https://github.com/pavarit/lidr-models/pull/29), [batch 2 = PR #30](https://github.com/pavarit/lidr-models/pull/30)). Targets the **`## Folder map`** section — ~100 lines enumerating nearly every `.py` file with a one-line annotation, almost all of it bleed on a per-task load.
+
+**Chose Path B (delete annotations, rely on module docstrings) over Path A (move them into docstrings), and a docstring survey is what decided it.** Coverage is already 90–100% across the three packages: every logic-bearing module already has a top-level docstring that says what its folder-map annotation said (often verbatim) — only empty namespace `__init__.py` files lack one. So the per-file annotations were duplication of an existing canonical home (the one-fact-one-place violation), and the codebase was already ~95% at Path A's endstate. Path B was strictly better here: no ~30-file churn, and it avoided touching `eval/report.py`/`metrics.py` (which would have triggered the refresh-sample-report rule and needed internet). The folder map is now a high-level layout — 3-package overview + top-level dirs — with an explicit pointer that per-module purpose lives in each module's docstring. `news_sentiment` was trimmed to high-level now rather than deferred to revised PR-B: there's no docstring work to skip (all 26 modules already have them), and a high-level description won't go stale when PR-B rewrites the package contents.
+
+**Sole code touch:** added a one-line module docstring to `packages/lidr_core/src/lidr_core/models/__init__.py` — the only annotated logic module that lacked one — so the "no orientation lost" claim is airtight. No behavior change; does not trigger the refresh-sample-report rule.
+
+Verified the three path-naming Convention rules still resolve from their own text after the trim (signal-three-things, refresh-sample-report, and the How-the-pipeline-works numbered steps all name their paths inline, independent of the folder map). Folding the oldest 5 Recent Changes entries (the five 2026-05-27 entries) into a new Archived Summary sub-section kept this section ≤10.
+
 ### 2026-05-28 — CLAUDE.md context-bleed trim, batch 2 of 3: Diagnostic Playbook extraction (docs only)
 
 Moved durable model-PR guidance out of three decaying dated entries into a new always-loaded section. Second of the three-batch bleed arc ([batch 1 = PR #29](https://github.com/pavarit/lidr-models/pull/29)).
@@ -341,97 +284,21 @@ Filled in the `news_sentiment` package shell from Task 1 with the structural pie
 
 **Plan doc stays alive.** `docs/plans/task-2-news-sentiment-model.md` is not deleted in this PR — Task 2's DoD ("delete the plan once the checkpoint merges") refers to PR-C. The CLAUDE.md Active Task section now carries the durable framing (the three-PR slice + what each PR ships); the plan doc keeps the per-phase build order.
 
-### 2026-05-27 — Task 1: monorepo restructure into lidr_core / ta_ensemble / news_sentiment + schema v2 (PR #23)
-
-Mechanical, no-behavior-change restructure that executes the plan from the 2026-05-27 planning session. `src/lidr_ml/` is gone; the code now lives in three packages under `packages/`:
-
-- **`lidr_core`** — the shared harness: backtest engine, eval (metrics, report, results_log, the new `leaderboard.py`), data loaders, generic learners (logistic + LightGBM), and the new `contract/` (artifact JSON Schema + writer + loader + the new `Feature` / `DataSource` protocols).
-- **`ta_ensemble`** — the six TA signals + their pipeline + their configs. Today's only complete model. Depends on `lidr_core`; CLI is now `python -m ta_ensemble backtest <config>`.
-- **`news_sentiment`** — empty shell, README points at the Task 2 plan.
-
-Imports updated repo-wide (no `lidr_ml.*` left). All moves used `git mv` so file history is preserved. Each package owns its own `pyproject.toml`; root `pyproject.toml` is now dev-tool-only. `make install` installs all three editable. CI workflow updated to do the same. Configs gain `model_id: ta_ensemble` + `model_version` so produced artifacts identify their model family.
-
-**Artifact contract formalized at `schema_version: 2`** in `lidr_core/contract/schema/artifact.schema.json`. v1's implicit dict is replaced by `build_artifact` + `write_artifact` which validates against the schema before writing (via `jsonschema`; falls back to a narrow in-tree check if not installed). Predictions now land under `artifacts/predictions/<model_id>/` so multiple models don't collide, and a top-level `artifacts/manifest.json` leaderboard is generated by `leaderboard.write_manifest` (picks the latest artifact per model by mtime, not lex filename order — a `dev_synthetic` file sorts after `baseline_*` alphabetically and the lex version silently picked the wrong "latest").
-
-**Parity gate passed.** Re-ran `baseline_six_signals_unweighted.yaml` before (run_id `20260527-183934`) and after (run_id `20260527-190244`) the moves: `skill_score = -0.005104`, `cagr = 0.142454`, `n_oos = 3851`, and every other metric column in `results_log.csv` matches bit-for-bit between the two rows. The relocation didn't perturb the pipeline. Tests: 24 / 24 passing; lint clean across the three packages.
-
-**Workflow notes worth keeping.** The plan doc `docs/plans/task-1-repo-restructure.md` was deleted as the final step of this PR (mirrors the PR-evidence cleanup habit — squash-merge collapses the add+delete pair so `main` stays free of execution-plan churn); the durable docs (ADR 0001, `docs/research/data-sources.md`, Task 2 plan) stay. The GitHub repo *URL* is still `pavarit/lidr-ml`; renaming it is a UI-only step that can be done later without touching the code.
-
-### 2026-05-27 — Planning: multi-model architecture + news-sentiment model (docs only, no code)
-
-Planning-only session in Cowork. The project framework firmed up: `lidr` is the front-end; multiple *competing* models will feed it recommendations through the JSON artifact. Decided to reorganize around the contract rather than around models — rename `lidr-ml` → `lidr-models` and split it into a `lidr_core` shared harness (backtest, eval, results_log, the formalized artifact contract, and the Signal/Model/Feature/DataSource protocols) plus per-model packages (`ta_ensemble` = today's six-signal pipeline; `news_sentiment` = the new model). Rationale, alternatives, and the designed-for-change requirements (swappable data sources / features / model; easy iterate-and-compare loop) are in `docs/adr/0001-multi-model-repo-architecture.md`.
-
-Wrote four planning docs under `docs/` (adr/, research/, plans/) — see the Active Task section for the index. No code moved; the restructure and the model build are handed off to Claude Code as Task 1 (mechanical, parity-gated restructure) and Task 2 (news-sentiment model, blocked by Task 1), each with a kickoff prompt embedded in its plan doc. Doc hygiene by design: the **ADR** (which now also holds the artifact-contract schema-v2 design, folded in from a separate doc) and **`docs/research/data-sources.md`** are durable knowledge and stay; the two **`docs/plans/` docs are disposable** and instruct Claude Code to delete themselves in the cleanup commit once their task merges (mirroring the existing PR-evidence cleanup habit), so the repo doesn't accumulate stale execution plans. Also captured verified news/sentiment data-source research (free-tier status + paid pricing + leverage call; decision to trial Tiingo News at ~$10/mo) in `docs/research/data-sources.md` so it's not re-derived later. When Task 1 executes, this repo's folder map, Stack, and Conventions sections will need updating to match the new monorepo layout.
-
-### 2026-05-27 — LightGBM checkpoint: still no edge, and the model class is not the bottleneck
-
-Shipped LightGBM as the second base learner ([PR #20](https://github.com/pavarit/lidr-models/pull/20), commit `c4f0044`). New module `src/lidr_ml/models/lightgbm.py`, registered as `"lightgbm"` in the model registry, configured via `configs/baseline_six_signals_lightgbm.yaml` (identical to `baseline_six_signals_unweighted.yaml` except `model.type`). Conservative defaults: `n_estimators=200`, `learning_rate=0.05`, `num_leaves=31`, `min_child_samples=20`. New row in `artifacts/results_log.csv` at `run_id=20260527-143507`.
-
-**Headline: LightGBM is worse than logistic on this problem.** `skill_score = -0.1478` vs the unweighted logistic's -0.005. Strategy CAGR 9.3% vs B&H 14.0%.
-
-**The diagnostics reframed the headline.** Wrapping LightGBM in `CalibratedClassifierCV(method='isotonic', cv=3)` moves skill_score from -0.148 to -0.004 — back to the no-skill floor. So LightGBM's raw predictions aren't anti-informative, they're badly miscalibrated. **The calibration step in Next Up is now empirically validated as needed** before any prediction artifact ships to lidr (was previously a theoretical concern; now there's a 0.14-point skill_score delta backing it up).
-
-**The deeper finding strengthened.** Three independent well-behaved configs converge on the same answer:
-
-| config | skill_score |
-| --- | --- |
-| six_signals_unweighted (logistic) | -0.005 |
-| LightGBM tiny (4 leaves, 20 trees, min_child=200) | -0.007 |
-| LightGBM default + isotonic calibration | -0.004 |
-
-When given enough freedom *and* calibrated probabilities, the model learns to predict the prior. There's no day-to-day signal in these six features against the 5-day-forward-return-sign target. **The bottleneck is the features/target, not the model class.** Roadmap pivoted: Next Up #1 was "LightGBM" (this entry replaces it); the new #1 is target/feature reformulation. Stacking (was #2) is parked under the edge gate — a stacker over two no-skill base learners inherits no signal.
-
-**Diagnostic suite + reporting lessons → [Diagnostic Playbook](#diagnostic-playbook).** This PR established the five model-PR diagnostic checks (column-order spot check, in-sample fit, hyperparameter sensitivity, calibration wrapper, seed-stability sweep) and reinforced the reporting lessons (write interpretation only after generating the data; reviewer pushback drives the best reframes of a negative result). Both are task-agnostic and now live in the Diagnostic Playbook rather than here.
-
-**Per-period breakdown surfaced a regime story the full-window aggregate hides.** LightGBM is the *worst* strategy in 2024 (+14% vs B&H +26%) but the *best* in 2025 (+22% vs +17%) and Q1 2026 (+0.0% vs -4.5%). Per-period skill_score confirms it's not skill — Q1 2026 LightGBM (-0.192) is essentially tied with unweighted logistic (-0.194). LightGBM has a structural bias toward sometimes-cash positions: helps when down/choppy, hurts when up. Not signal.
-
-### 2026-05-27 — `class_weight=None` sanity check before LightGBM
-
-Quick sanity check motivated by the Gotcha bullet about `class_weight=balanced` distorting `predict_proba`. New config `configs/baseline_six_signals_unweighted.yaml` (identical to `baseline_six_signals.yaml` except `class_weight` is omitted → sklearn default `None`). New row in `artifacts/results_log.csv` at `run_id=20260527-134952`.
-
-**Surprise finding: `class_weight=balanced` was actively harmful, not just probability-distorting.** Removing it shrank the distance from the no-skill baseline ~7×: `skill_score` -0.0374 → -0.0051. Pre-experiment prediction was "almost certainly won't move skill_score" — wrong. The reweighting was forcing confidently-wrong predictions on a 60/40 problem.
-
-**But it's still not skill.** The unweighted model has `pred_rate = 0.996` (long virtually every day), `mean P(up) = 0.590`, and a P(up) distribution that's a ~0.10-wide spike entirely above 0.5 (max value 0.70). Accuracy 0.610 ≈ `base_rate` 0.611 because the model is essentially "predict the unconditional base rate every day" — a constant predictor that mechanically matches the no-skill baseline.
-
-**The strategy CAGR 14.25% vs benchmark 14.04% (excess +0.20%) is noise, not edge.** Three independent reasons it can't be skill:
-1. **`skill_score = -0.005` is negative.** The probability predictions themselves carry no information about outcomes — strictly worse than just predicting `base_rate`. Whatever the strategy gains, it can't be from informative predictions.
-2. **The "excess" comes from ~15 lucky cash days.** Pred_rate = 0.996 means the strategy is in cash on 0.4% × 3,851 OOS days ≈ 15 days total. By chance, those 15 happened to be slightly negative. A 20 bps/year difference is well inside the noise band of any sensible significance test (SPY daily-return std ≈ 1%, annual std ≈ 16% — t-stat of the excess is ~0).
-3. **Per-period evidence kills it definitively.** Per the PR #20 per-period table: in 2024, 2025, and Q1 2026 the unweighted-logistic strategy returns are *bit-identical* to B&H (the model is long every day in those windows). The full-window 20 bps came entirely from earlier-year cash-day luck and is unrepeatable.
-
-**Functionally equivalent to no model at all.** An intercept-only logistic (zero features) would predict P(up) ≈ base_rate every day and produce the same strategy. The six features are non-load-bearing in this configuration. The full-window "+0.20 pp excess" line in `results_log.csv` is technically true but should not be read as edge.
-
-So: `class_weight=balanced` was forcing confidently-wrong predictions (anti-informative); removing it lets the model collapse to no-skill baseline; the linear-features-via-logistic setup still can't extract day-to-day signal from these six features. **Recommendation for LightGBM stands stronger.** The failure mode is now clearly about the linear model's inability to express feature interactions, not class balance.
-
-**Gotcha bullet strengthened** — was "distorts predict_proba" (descriptive), now "actively harmful, default `class_weight=None`" with concrete skill_score numbers. The general rule (an experiment contradicting a Gotcha is the moment to rewrite it in place) now lives in the [Diagnostic Playbook](#diagnostic-playbook).
-
-**Dup-date fix verified benign on headline metrics.** Re-ran `baseline_six_signals.yaml` post-fix at `run_id=20260527-135054` → `skill_score = -0.0374` (same as the pre-fix row `20260527-120203` to 4 decimals). The dup-date Gotcha's "below the noise floor" claim is now empirically confirmed for this config, not just estimated. Both rows kept in results_log as a reference comparison.
-
-### 2026-05-27 — Six-signal logistic baseline checkpoint (edge gate stays closed)
-
-Ran `baseline_six_signals.yaml` — same target/model/backtest/costs as `baseline_v1`, only the feature set changed (added rsi, macd, bollinger, breakout, volume to sma_crossover). New row appended to `artifacts/results_log.csv` at `run_id=20260527-120203`. OOS: 2010-12-30 → 2026-04-23, 3,862 days (later start than baseline_v1 because of the 252-day breakout warmup, so only `excess_*` is directly comparable across the two full-window rows). The row was generated *before* the dup-date fix landed (same day, PR #16) so it carries the same ~0.3% double-counting bias as other pre-fix rows — see Gotchas.
-
-**Verdict: edge gate stays closed.** Neither model beats buy-and-hold and neither has positive skill.
-
-**Important reframe.** The initial read was "six features is worse than one feature" (lower accuracy, lower CAGR, lower final equity). That's mechanically true on the full window but **misleading on what the models actually do**:
-
-| | baseline_v1 | baseline_six_signals |
-|---|---|---|
-| `skill_score` (log-loss vs no-skill floor) | -0.0378 | -0.0374 |
-| `mean P(up)` | 0.503 | 0.505 |
-| `pred_rate` (model says up) | 0.753 | 0.595 |
-| `base_rate` (truth = up) | 0.613 | 0.611 |
-
-In probability space the two models are essentially **equally non-skilled** — skill_score differs by 0.0004 over 3,800+ observations (sampling noise). Both are 0.5-spitters; 99% of six's probabilities fall in [0.40, 0.60]. The headline equity gap is **exposure (pred_rate), not skill**: baseline_v1 is long 75% of days vs six's 60%, and in a 14%-CAGR market more exposure compounds harder. The accuracy gap (-4.1 pp) is the same effect — in a market with `base_rate` ≈ 0.61, predicting "up" 75% of the time accidentally matches truth more often than predicting "up" 60% of the time.
-
-**Recent windows favor six.** On 2025 calendar (n=250, same window for both), six **beats v1 decisively** — accuracy 0.548 vs 0.496, skill_score -0.053 vs -0.057, total return +15.2% vs +6.4% (excess vs B&H -3.0 pp vs -11.8 pp). On 2026 Q1 (n=61), six predicts up every day and **exactly matches B&H** (0% excess); v1 takes a few wrong cash days and loses 3.15 pp. baseline_v1's equity curve has long flatlines (cash for months at a time, including the entire post-April-2025 rally) that baseline_six does not.
-
-**Conclusion: the bottleneck is the linear-model assumption, not the feature count.** Adding five orthogonal signals didn't move skill_score and made accuracy *worse* on the full window — but modestly improved recent-period behavior. Next move per the roadmap is LightGBM (now Active Task).
-
-**Workflow lessons → [Diagnostic Playbook](#diagnostic-playbook).** The reporting lessons this PR produced (and the diagnostic dig the reviewer pushback triggered) now live there: don't conflate accuracy with skill when base_rate ≠ 0.5; dig before publishing a surprising result; two charts beat one for multi-year data; chart-vs-log cross-check on every one-off verify script (this PR's `prices["Close"]`-grabbed-`open` bug, equity ending 0.6× vs results_log's 2.47×, is the cautionary tale).
-
 ## Archived Summary
 
 Older entries folded down per the Maintenance Instructions rule (Recent Changes exceeds 10 → fold oldest 5). Decisions and rationale preserved; narratives compressed. Sources: PRs and full entries in git history before commit `<this PR>`.
+
+### Multi-model restructure + edge-gate model checkpoints (2026-05-27)
+
+**Planning: multi-model architecture (docs only).** Decided to reorganize around the JSON-artifact *contract* rather than around models: rename `lidr-ml` → `lidr-models` and split into a `lidr_core` shared harness (backtest, eval, results_log, the formalized contract, the Signal/Model/Feature/DataSource protocols) plus per-model packages (`ta_ensemble` = six-signal pipeline; `news_sentiment` = new model). Rationale + alternatives + designed-for-change requirements live in `docs/adr/0001-multi-model-repo-architecture.md` (which also absorbed the schema-v2 design). Doc-hygiene rule set here: the ADR + `docs/research/data-sources.md` are durable and stay; `docs/plans/` docs are disposable and self-delete on their task's merge. (This session's Tiingo-at-~$10/mo trial decision was later overturned — see the 2026-05-28 plan-revision entry.)
+
+**Task 1: monorepo restructure + schema v2 ([PR #23](https://github.com/pavarit/lidr-models/pull/23)).** Mechanical, no-behavior-change execution of that plan. `src/lidr_ml/` → three packages under `packages/` (`lidr_core` harness, `ta_ensemble` six-signal model, `news_sentiment` empty shell). `git mv` preserved history; each package owns its `pyproject.toml`; root is dev-tool-only; `make install` installs all three editable; CI updated. Configs gained `model_id` + `model_version`. **Artifact contract formalized at `schema_version: 2`**: `build_artifact` + `write_artifact` validate against `lidr_core/contract/schema/artifact.schema.json` before writing (`jsonschema`, with a narrow in-tree fallback); predictions land under `artifacts/predictions/<model_id>/`; `leaderboard.write_manifest` picks the latest artifact per model by **mtime, not lex order** (a `dev_synthetic` file sorts after `baseline_*` and the lex version picked the wrong "latest"). **Parity gate:** re-ran `baseline_six_signals_unweighted.yaml` before/after → `skill_score -0.005104`, `cagr 0.142454`, `n_oos 3851` bit-identical across every metric column. 24/24 tests, lint clean. (The GitHub repo *URL* stayed `pavarit/lidr-ml` at the time — a UI-only rename.)
+
+**LightGBM checkpoint: still no edge ([PR #20](https://github.com/pavarit/lidr-models/pull/20), commit `c4f0044`).** Added LightGBM as the second base learner (registered `"lightgbm"`, `baseline_six_signals_lightgbm.yaml`). Headline: **LightGBM is worse than logistic** — `skill_score -0.148` vs the unweighted logistic's -0.005. But wrapping it in `CalibratedClassifierCV(isotonic, cv=3)` moved it to -0.004 → the raw probabilities are *miscalibrated*, not anti-informative, which **empirically validated calibration as a needed pre-ship step** (0.14-point delta). Three well-behaved configs (unweighted logistic -0.005, tiny LightGBM -0.007, calibrated LightGBM -0.004) all cluster at the no-skill floor → **the bottleneck is the features/target, not the model class.** Roadmap pivoted to target/feature reformulation; stacking parked under the edge gate (a stacker over two no-skill learners inherits no signal). The five diagnostic checks this PR established now live in the Diagnostic Playbook.
+
+**`class_weight=None` sanity check.** `baseline_six_signals_unweighted.yaml` (drops `class_weight`). Removing `class_weight=balanced` shrank the distance from no-skill ~7× (`skill_score -0.0374 → -0.0051`): **balanced was actively harmful** — forcing confidently-wrong predictions on a 60/40 problem — not merely probability-distorting (Gotcha bullet rewritten in place to say so). But still not skill: `pred_rate 0.996`, predicts ≈`base_rate` every day, functionally equivalent to an intercept-only model; the +0.20pp CAGR "excess" was ~15 lucky cash days, noise. Also confirmed the dup-date fix benign (post-fix `baseline_six_signals` `skill_score -0.0374`, unchanged to 4 dp).
+
+**Six-signal logistic baseline checkpoint (edge gate stays closed).** Added rsi/macd/bollinger/breakout/volume to sma_crossover. Neither model beats buy-and-hold nor has positive skill. Key reframe: six features vs one are **equally non-skilled in probability space** (skill_score differs by 0.0004 — sampling noise); the equity gap is **exposure (`pred_rate` ~0.60 vs ~0.75), not skill**. Conclusion: the bottleneck is the linear-model assumption, not feature count → motivated the LightGBM checkpoint. Reporting lessons this PR produced now live in the Diagnostic Playbook.
 
 ### Six-signal TA model build-out + CLAUDE.md drift-fix arc (2026-05-26 → 2026-05-27)
 

@@ -1,3 +1,5 @@
+"""Model registry — name → Model class, plus build_model(spec)."""
+
 from lidr_core.models.lightgbm import LightGBMModel
 from lidr_core.models.logistic import LogisticRegressionModel
 from lidr_core.protocols.model import Model
