@@ -170,6 +170,8 @@ Run these before publishing any "model X has (no) edge" conclusion. They rule ou
 
 ## Next Up
 
+**Human-facing headline status lives in [README → Current status at a glance](README.md#current-status-at-a-glance)** — keep the two in sync when the project state changes. This section is the detailed priority list behind that summary.
+
 Priority order, framed around a single near-term goal: **prove the model has an edge over buy-and-hold** before building any serving/integration plumbing. As of 2026-05-27, neither logistic nor LightGBM beats no-skill on the six TA signals → 5d-forward-return-sign target (see Recent Changes → LightGBM checkpoint). The diagnostic finding was that the model class is *not* the bottleneck — three independent well-behaved configs (unweighted logistic, tiny LightGBM, calibrated LightGBM) all cluster at the no-skill floor. So the next move is to attack the target/feature setup, not try more models.
 
 Cross-references to Next Up items use names, not numbers — see Maintenance Instructions for why. Completed items are removed from this section and live in Recent Changes instead.
@@ -213,6 +215,16 @@ Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-mod
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-29 — Docs cleanup PR 2: single-source the project status (docs only)
+
+Second of the four-PR docs-cleanup arc (PR 1 = stale-fact/dead-link fixes, [#34](https://github.com/pavarit/lidr-models/pull/34)). PR 2 fixes the project's *current-status* story, which was scattered across the README baseline section, CLAUDE.md → Next Up / Active Task, Recent Changes, and `manifest.json` — and disagreed. No code touched.
+
+**README.** Added a canonical **Current status at a glance** block at the top (the single human-facing "where is this project now" home): no model beats buy-and-hold yet; six TA signals + logistic/LightGBM all sit at/below the no-skill floor (best `skill_score` ≈ −0.005); bottleneck is the features/target, not the model class; live levers are magnitude-regression target + regime features; news_sentiment in PR-A. Rewrote *What's next* to that real roadmap (the five-signals/LightGBM/horizon-sweep work is done, not upcoming; stacking/serving/calibration/3-class/lidr all gated on edge). Reframed the SPY baseline section as the *single-signal* first bar and linked it to the snapshot so the detailed numbers stay but the conclusion matches the canonical status.
+
+**CLAUDE.md.** Next Up now opens with a pointer to the README snapshot as the human-facing headline status (one-fact-one-place — the detailed priority list stays here, the at-a-glance summary lives in README).
+
+Doc-only, no behavior change → no verification chart; refresh-sample-report not triggered. Remaining arc: PR 3 (docs index + config index + move the pipeline walkthrough into README) and PR 4 (artifact-hygiene table + `make clean-predictions`); a separate leaderboard-mtime code fix follows. (Recent Changes is at 11 entries after this — fold the oldest 5 per the Maintenance rule when the arc wraps.)
 
 ### 2026-05-29 — Docs cleanup PR 1: fix stale facts & dead links (docs only)
 

@@ -14,6 +14,14 @@ Three packages under `packages/`:
 
 See `CLAUDE.md` for the full architecture, design decisions, and roadmap, and [`docs/adr/0001-multi-model-repo-architecture.md`](docs/adr/0001-multi-model-repo-architecture.md) for the rationale behind the monorepo shape.
 
+## Current status at a glance
+
+_Updated 2026-05-29. This is the canonical "where is the project right now" summary; [`CLAUDE.md`](CLAUDE.md) carries the full experiment history behind it._
+
+- **No model beats buy-and-hold yet — and closing that gap is the whole near-term focus.** The six TA signals fed to logistic regression *and* LightGBM all land at or below the no-skill floor (best `skill_score` ≈ −0.005, the unweighted six-signal logistic). Three well-behaved configs cluster at the floor, and a target-horizon sweep (5 → 60 day) only made it worse — so the bottleneck is the **features/target, not the model class**.
+- **Next lever:** reformulate the target/features — return-magnitude regression instead of binary sign, and regime features (VIX, yield-curve slope, realized vol). Stacking, final-model serving, probability calibration, 3-class output, and lidr wiring are all gated behind a model first clearing buy-and-hold.
+- **Second model — `news_sentiment` (Task 2):** PR-A scaffolding merged (free adapters + collector + lexicon scorer + features + offline pipeline). Real backtest + news-vs-TA comparison land in PR-B/PR-C.
+
 ## Quick start
 
 ```bash
@@ -84,7 +92,7 @@ The HTML report contains: a config summary, top-line classification metrics with
 - Cross-run results log at `artifacts/results_log.csv` — one row appended per backtest
 - Signal accuracy + no-lookahead test harness; CI runs `make test` + `make lint` on every push
 
-**SPY baseline status** (run `20260526-124439`, OOS 2010-10-18 → 2026-04-23, 3,914 predictions across 16 walk-forward splits):
+**SPY single-signal baseline** — the simplest config (SMA crossover → logistic) and the first real bar (run `20260526-124439`, OOS 2010-10-18 → 2026-04-23, 3,914 predictions across 16 walk-forward splits):
 
 | | Strategy | Buy & Hold |
 | --- | --- | --- |
@@ -99,7 +107,7 @@ The single-signal logistic model **underperforms buy-and-hold on every dimension
 - **Accuracy `0.556` < base rate `0.613`** — predicting "up" every day beats this model on raw correctness.
 - **Pred-rate `0.753` vs base-rate `0.613`** — model predicts "up" 75 % of the time despite reality being 61 %. Strongly biased even with `class_weight="balanced"`.
 
-That's the bar every future model has to clear. The full row for this run (`run_id` `20260526-124439`) is in [`artifacts/results_log.csv`](artifacts/results_log.csv) — the git-tracked record of every backtest. (Per-run prediction JSONs under `artifacts/predictions/` are gitignored build outputs and aren't present on a fresh clone — see [Outputs](#outputs).)
+That's the floor every model has to clear — and nothing has yet: adding all six signals and swapping in LightGBM reached the same verdict (see [Current status](#current-status-at-a-glance)), which is why the roadmap now targets the features/target rather than the model class. The full row for this run (`run_id` `20260526-124439`) is in [`artifacts/results_log.csv`](artifacts/results_log.csv) — the git-tracked record of every backtest. (Per-run prediction JSONs under `artifacts/predictions/` are gitignored build outputs and aren't present on a fresh clone — see [Outputs](#outputs).)
 
 ## CLI
 
@@ -200,7 +208,7 @@ To remove a bad row (e.g. a buggy run), edit the CSV directly — git diff will 
 
 ## What's next
 
-Single near-term goal: **prove the model has an edge over buy-and-hold** before building any serving/integration plumbing. See `CLAUDE.md` → Next Up for the full priority list. Short version: port the remaining five lidr signals (RSI, MACD, Bollinger, breakout, volume) → add LightGBM as a second base learner → stacking → regime features. Final-model fit/serialize, artifact schema, lidr wiring, and MLflow are all explicitly **gated** on something actually beating buy-and-hold first.
+Single near-term goal: **prove a model has an edge over buy-and-hold** before building any serving/integration plumbing. The six TA signals, LightGBM, and a target-horizon sweep are all done — none cleared the no-skill floor, and the diagnosis is that the **features/target** are the bottleneck, not the model class. So the live directions are reformulating the target (return-magnitude regression instead of binary sign) and adding regime features (VIX, yield-curve slope, realized vol); stacking is parked until a base learner shows non-zero skill. Final-model fit/serialize, probability calibration, 3-class output, lidr wiring, and MLflow are all explicitly **gated** on something actually beating buy-and-hold first. See [`CLAUDE.md`](CLAUDE.md) → Next Up for the full priority list and [Current status](#current-status-at-a-glance) for where things stand.
 
 ## Project layout
 
