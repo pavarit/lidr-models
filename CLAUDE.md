@@ -18,7 +18,7 @@ Two-repo setup, deliberately kept separate:
 - **`lidr-models`** (this repo, Python) — a research monorepo that produces the artifacts. Three packages under `packages/`:
   - `lidr_core` — shared harness: backtest engine, eval/metrics, results_log + leaderboard, the JSON artifact contract (schema + writer + loader), the `SignalFn` / `Model` / `Feature` / `DataSource` protocols, base data loaders, generic learners (logistic / LightGBM). Owned once, reused by every model.
   - `ta_ensemble` — the six technical-analysis signals + their pipeline. Today's only complete model.
-  - `news_sentiment` — Task 2, in development. PR-A (this branch) lands scaffolding + Phase 0 free data adapters (EDGAR / GDELT / Reddit / Google Trends + synthetic) + collector with timestamped on-disk cache + a deterministic lexicon scorer + three lookahead-safe features + an offline dev pipeline. Tiingo News, FinBERT, and the LLM scorer are stubs that raise until PR-B; the real `news_v0.yaml` backtest + comparison evidence is PR-C.
+  - `news_sentiment` — Task 2, in development. PR-A merged 2026-05-28 (commit `b9ce76a`): scaffolding + four free data adapters (EDGAR / GDELT / Reddit / Google Trends + synthetic) + collector with timestamped on-disk cache + a deterministic lexicon scorer + three lookahead-safe features + an offline dev pipeline. PR-B (revised 2026-05-28 plan, see Active Task) will rewire data sources — delete Tiingo, convert Reddit + Google Trends to permanent stubs, add Finnhub / Apewisdom / EODHD adapters — and light up FinBERT + LLM scoring. The real `news_v0.yaml` backtest + comparison evidence is PR-C.
 
 Integration is via JSON files written to `artifacts/predictions/<model_id>/<config>-<timestamp>.json`, validated against the contract on write, plus a top-level `artifacts/manifest.json` leaderboard lidr will use to discover models. Cheap, debuggable, version-controllable. A FastAPI service is on the lidr roadmap and will be added here when the lidr side is ready to consume live predictions.
 
@@ -235,28 +235,61 @@ Cross-references to Next Up items use names, not numbers — see Maintenance Ins
 
 ## Active Task
 
-**Task 2 — news-sentiment model is in progress; PR-A (scaffolding + Phase 0 free adapters + offline dev path) is open.** Sliced into three PRs because the "first checkpoint" defined in the plan requires paid Tiingo News + Anthropic + Reddit credentials + a FinBERT download that aren't available right now:
+**Plan revised 2026-05-28.** PR-A merged (commit `b9ce76a`). The original PR-B plan assumed Reddit (PRAW) + Tiingo News at $10/mo; credential setup found Reddit is blocked by the **Responsible Builder Policy** and Tiingo is $30/mo with only 3 months of news history at that tier. Full revised data-source picture in [`docs/research/data-sources.md`](docs/research/data-sources.md). Boon approved Path 4 (rewire PR-B around the validated stack: EODHD $19.99/mo replacing Tiingo, Apewisdom replacing Reddit's live role, Finnhub free in the backbone, Reddit + Google Trends out as permanent stubs).
 
-- **PR-A (current).** Package scaffolding, the `DataSource` registry with real implementations of the four free adapters (EDGAR / GDELT / Reddit / Google Trends — heavy deps lazy-imported) + a deterministic synthetic source, the collector with timestamped JSONL on-disk cache, the lexicon scorer (zero-dep, deterministic), three lookahead-safe features (sentiment_level, sentiment_momentum, abnormal_mention_volume), the pipeline wiring against `lidr_core`, `dev.yaml` running end-to-end on synthetic prices + synthetic news, schema-v2 artifact validates, lookahead test covers all three news features. FinBERT, LLM scorer, Tiingo are stubs that raise with the next-PR instructions baked into the error message; the LLM scorer's cache + budget cap + spend-log scaffolding is real PR-A code so PR-B drops a live call into known-good cost controls. **No real backtest, no edge claim, no news-vs-TA comparison** — those land in PR-C.
-- **PR-B.** Wire Tiingo News (paid, ~$10/mo), FinBERT (440MB download), and the live LLM call. Need: `TIINGO_API_KEY`, `ANTHROPIC_API_KEY`, `REDDIT_CLIENT_ID/SECRET`. Adds integration tests with recorded fixtures so the adapter parsing is covered without burning real API quota in CI.
-- **PR-C.** `news_v0.yaml` real backtest on a 5–10 ticker universe; appends a `results_log` row; refreshes `manifest.json`; comparison chart + per-period table of news_sentiment vs ta_ensemble vs buy-and-hold per the outcome-changing-PR evidence convention. Deletes [`docs/plans/task-2-news-sentiment-model.md`](docs/plans/task-2-news-sentiment-model.md) in the cleanup commit per the plan's DoD.
+**Sequenced as:** (1) **horizon-spike on TA model first** (cheap, free, ~1–2 days — settles the 5d-vs-20d target-noise question that directly shapes `news_v0.yaml`'s horizon choice). (2) **Revised PR-B** wires the new data sources + lights up FinBERT + LLM. (3) **PR-C** runs the real `news_v0.yaml` backtest + comparison.
 
-Plan doc stays alive until PR-C merges. CLAUDE.md gets the durable framing; the plan carries the per-phase build order.
+### Step 1 — Horizon spike (active next)
 
-Also still on the board:
+Run target-horizon sweep on the existing six-signal TA model to settle whether the 5d-sign target's noise floor is itself the bottleneck. If 20d helps meaningfully, design `news_v0.yaml` against the same horizon. Free, doesn't need creds.
 
-Parked alternative (pre-existing, still valid): **Target/feature reformulation (Next Up #1).** Pick one of three directions; recommendation is **(a) longer horizon first** because it's the cheapest to test and most directly answers "is the 5d-sign target too noisy?" If it doesn't move skill_score, that's evidence the bottleneck is feature-side (in which case (c) regime features is the next try). If it does move skill_score, that retargets the rest of the roadmap around magnitudes/horizons rather than sign.
+Concrete: clone `packages/ta_ensemble/configs/baseline_six_signals_unweighted.yaml` → variants at `target.horizon_days: 1, 5, 10, 20, 60`. Do the same for the LightGBM config. Run all, append rows to `results_log.csv`, plot **skill_score vs horizon** for both model classes + per-period strategy returns. PR with the chart + per-period table as evidence per the outcome-changing-PR convention.
 
-- **(a) Longer horizon (recommended first).** Clone `packages/ta_ensemble/configs/baseline_six_signals_unweighted.yaml` → `baseline_six_signals_20d_unweighted.yaml` with `target.horizon_days: 20`. Also clone the LightGBM config the same way. Backtest both. The chart to make is **skill_score vs horizon** for both model classes (1d, 5d, 10d, 20d, 60d) — would settle whether the bottleneck is "target horizon too noisy" cleanly.
-- **(b) Return-magnitude regression.** Bigger lift. New `target.type: forward_return_regression`, new regressor wrapper (`lidr_core/models/lightgbm_regressor.py` or sklearn's `Ridge`), revised `Model` protocol or a sibling `RegressionModel` protocol, and a different evaluation path (RMSE / R² in place of accuracy / log_loss). The strategy rule itself becomes a question: long when predicted return > threshold? Long-short? Worth doing only if (a) shows promise — regression on a still-noisy target is doubly hard.
-- **(c) Regime features.** Add VIX (`^VIX`), 10y yield (`^TNX`), realized vol. Requires extending `lidr_core/data/loaders.py` to fetch additional tickers and align them to the SPY index. Adds 3 features without changing the target. Conceptually most likely to add information; mechanically biggest change to the data layer.
+**Claude Code kickoff prompt (horizon spike):**
 
-Concrete first step (if pursuing (a)): in a new branch, write `packages/ta_ensemble/configs/baseline_six_signals_20d_unweighted.yaml` and `packages/ta_ensemble/configs/baseline_six_signals_20d_lightgbm.yaml`, run both, append rows to results_log.csv, plot skill_score and per-period strategy returns for the 4 configs (5d-vs-20d × 2 models). PR with the chart + per-period table as evidence per the outcome-changing-PR convention.
+```
+Read CLAUDE.md, then the Active Task → "Step 1 — Horizon spike" section.
+
+Execute the horizon spike (Next Up: target/feature reformulation, direction (a)).
+This is a free, no-credentials task that runs entirely on existing TA infrastructure.
+
+Steps:
+1. In a new branch, clone baseline_six_signals_unweighted.yaml and the LightGBM
+   config to variants with target.horizon_days in {1, 5, 10, 20, 60} — 10 configs total.
+2. Run each. Each run appends a row to artifacts/results_log.csv with the existing
+   per-period breakdown.
+3. Build the evidence chart: skill_score vs horizon for both model classes (10 points),
+   plus a per-period strategy returns table for the most interesting horizons.
+4. PR with the chart + table as PR-evidence per the outcome-changing-PR convention
+   (scripts/verify_*.py → docs/_pr_evidence/horizon_sweep/ → removed in cleanup commit).
+5. Document the finding in this Active Task section (which horizon won, by how much,
+   what it implies for news_v0.yaml). Do NOT start the revised PR-B.
+
+Follow protected-main PR workflow; CI green is required.
+```
+
+### Step 2 — Revised PR-B (after horizon spike merges)
+
+Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-model.md`](docs/plans/task-2-news-sentiment-model.md). Headline changes from the original PR-B plan: **delete** `tiingo.py`; **convert to permanent stubs** `reddit.py` (Responsible Builder Policy) and `google_trends.py` (pytrends archived 2025-04-17); **add real adapters** `finnhub.py` (free, US company news 1yr + real-time), `apewisdom.py` (free, retail-attention live), `eodhd.py` (paid, $19.99/mo, historical news + per-article sentiment); **drop the Quiver Quant idea from PR-B** — defer to optional later if news side shows promise. FinBERT + live LLM scoring still light up in this PR through PR-A's existing cost-control harness.
+
+### Step 3 — PR-C (after revised PR-B merges)
+
+`news_v0.yaml` real backtest on a 5–10 ticker universe using the rewired stack and `target.horizon_days` set per the horizon-spike outcome; `results_log` row + refreshed `manifest.json` + comparison chart + per-period table per the outcome-changing-PR evidence convention. Deletes [`docs/plans/task-2-news-sentiment-model.md`](docs/plans/task-2-news-sentiment-model.md) in the cleanup commit per the plan's DoD. The ADR and `docs/research/data-sources.md` stay as the durable record.
 
 <!-- Update this section when work is in progress. Replace with `_Nothing currently in-flight._`
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-28 — Plan revision: rewire PR-B around validated data sources (docs only, no code)
+
+Planning-only session in Cowork *after* PR-A merged, driven by two findings during credential setup that contradicted the original plan's assumptions: **(1) Reddit is effectively blocked** — Reddit's Responsible Builder Policy (verified directly at support.reddithelp.com/.../42728983564564) requires explicit moderation or accredited-academic justification for any Data API access; personal research collection no longer qualifies. **(2) Tiingo is $30/mo with only 3 months of news history at that tier** (verified from `tiingo.com/about/pricing`) — the original `~$10/mo + ~10yr history` thesis turned out wrong on both numbers; the 15-yr archive is sales-quoted enterprise. Also re-verified: **pytrends was archived 2025-04-17** so Google Trends as a free adapter is dead too.
+
+Worked through three alternatives with Boon: (a) pay $30 Tiingo as planned, (b) skip Tiingo and run free-only, (c) pivot to Next Up #1 (target/feature reformulation) and defer Task 2. None was right. Picked **Path 4 — rewire PR-B around the validated stack**: drop Reddit, Tiingo, Google Trends; add **EODHD News + Calendar at $19.99/mo** as the historical-news source (multi-year history + per-article sentiment scores included — better than Tiingo at lower price), **Apewisdom (free)** as the live retail-attention replacement for Reddit (they've already done Reddit's policy work, we consume aggregates), and **Finnhub (free tier)** promoted to backbone (1yr US company news + real-time at 60/min). **Optional later:** Quiver Quantitative Hobbyist $30/mo for historical WSB mentions back to 2018 — defer until news side shows promise. Net cost: $19.99/mo (vs original budget ~$10/mo, vs the $30/mo Tiingo shock we avoided).
+
+**Sequencing.** Boon also approved doing **Next Up #1's horizon spike first** (free, ~1–2 days) before revised PR-B — the 5d-vs-20d target-noise question directly shapes how `news_v0.yaml`'s `target.horizon_days` should be set, and it's cheap to settle. Horizon-spike kickoff prompt embedded in the Active Task section; revised PR-B kickoff prompt embedded in `docs/plans/task-2-news-sentiment-model.md`.
+
+**Files updated in this session.** [`docs/research/data-sources.md`](docs/research/data-sources.md) — major rewrite of the verification + paid-options tables to reflect the validated picture; added a dated 2026-05-28 decision-log entry preserving the 05-27 entry below it. [`docs/plans/task-2-news-sentiment-model.md`](docs/plans/task-2-news-sentiment-model.md) — restructured around revised PR-B and PR-C (PR-A is shipped); embedded the code-level instructions Claude Code will execute (delete `tiingo.py`, convert `reddit.py`+`google_trends.py` to permanent stubs, add three new adapters, update pyproject extras). This file (CLAUDE.md) — Active Task section now carries horizon-spike-first sequencing + the horizon-spike kickoff prompt, with PR-B and PR-C as Steps 2 and 3. No code touched; all changes execute in Claude Code per the PR workflow.
 
 ### 2026-05-28 — Task 2 PR-A: news_sentiment scaffolding + Phase 0 free adapters + offline dev path
 
