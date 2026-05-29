@@ -57,52 +57,9 @@ Reading top-down:
 5. **Backtest engine** (`packages/lidr_core/src/lidr_core/backtest/engine.py`) — expanding-window walk-forward. For each split: fit model on train slice, predict on test slice, store predictions. Never trains on data after the test period.
 6. **Model** (`packages/lidr_core/src/lidr_core/models/`) — pluggable. Today: logistic regression and LightGBM (both generic, hence in `lidr_core`). As of 2026-05-27, both have been backtested on the six-signal feature set against the 5d-forward-return-sign target; neither beats the no-skill baseline (see Recent Changes). The roadmap is currently pivoting to target/feature reformulation rather than more model classes.
 7. **Eval + report** (`packages/lidr_core/src/lidr_core/eval/`) — classification metrics (`classification_metrics` → `accuracy`, `base_rate`, `pred_rate`, `log_loss`, `base_logloss`, `n_obs`), strategy metrics (`strategy_metrics` → `cagr`, `sharpe`, `max_drawdown`, `final_equity`), and per-year breakdowns (`by_year` reports the classification fields per calendar year; `performance_by_year` reports strategy vs buy-and-hold returns and the excess). `base_rate` and `pred_rate` are deliberately shown beside `accuracy` — without them, an accuracy of 0.55 looks fine until you notice the base rate is 0.61. The equity curve itself is built in `lidr_core/backtest/engine.py::add_strategy_returns` ("go long when prediction = 1, cash otherwise"). HTML report written to `reports/<config>-<timestamp>/`. The report shows a **Strategy vs Buy & Hold** comparison table (CAGR, Sharpe, max drawdown, final equity for both legs) and a **per-year performance** table (strategy vs buy-hold return + excess) so regime-dependence is visible. A **Summary** section at the top translates the config into English and states the out-of-sample span (derived from the predictions, not the raw data range). Both the top classification metrics and the per-year table show **base_logloss** (the no-skill floor = entropy of the base rate) beside log loss, and the comparison/per-year tables green/red-highlight whichever side wins. The equity curve is marked to market with **1-day-forward returns**, not the N-day classification target — see Gotchas.
-8. **Cross-run results log** (`packages/lidr_core/src/lidr_core/eval/results_log.py`) — `append_run()` appends one row per backtest to `artifacts/results_log.csv` (skill score, full-OOS + per-period log loss with base-rate floors, strategy vs benchmark CAGR/Sharpe/max-drawdown, excess) so "did this change help?" is answerable without opening every HTML report. Opt out per-config with `output.results_log: false`; defaults to true. `dev_synthetic.yaml` sets it false so the smoke test (run on every push/PR) doesn't pollute the tracked CSV with synthetic rows — `packages/ta_ensemble/tests/test_pipeline_smoke.py` asserts the file size doesn't grow.
-9. **Artifact contract + leaderboard** (`packages/lidr_core/src/lidr_core/contract/`, `packages/lidr_core/src/lidr_core/eval/leaderboard.py`) — `contract/writer.py::build_artifact` assembles the schema_version: 2 payload (`model_id`, `model_version`, `config_name`, `ticker`, `metrics`, `predictions[].{date,recommendation,probability_up,y_pred,y_true}`); `write_artifact` validates against `contract/schema/artifact.schema.json` before writing. `leaderboard.py::write_manifest` scans `artifacts/predictions/<model_id>/` and emits `artifacts/manifest.json` so lidr can discover every produced model + its headline OOS skill score.
+## How the pipeline works
 
-Everything for the TA model is wired together by `packages/ta_ensemble/src/ta_ensemble/pipeline.py::run_pipeline(config_path)`.
-
-## Folder map
-
-High-level layout only. **Per-module purpose lives in each module's docstring** — open the file (or `pydoc <module>`) for what it does; nearly every module under `packages/*/src/` carries a one-line docstring. Each package has its own `pyproject.toml`; each has a `tests/` dir whose `conftest.py` holds shared fixtures.
-
-```
-packages/
-  lidr_core/        shared harness — owned once, reused by every model. backtest/ (expanding-window
-                    walk-forward engine + strategy returns), eval/ (metrics, HTML report, results_log,
-                    leaderboard), contract/ (schema_version-2 JSON Schema + writer/loader, validated on
-                    write), data/ (yfinance + synthetic OHLCV loaders), models/ (generic logistic +
-                    LightGBM learners), protocols/ (Signal/Model/Feature/DataSource).
-  ta_ensemble/      today's six-signal TA model; depends on lidr_core. signals/ holds the six pure-function
-                    signals (ports of lidr's lib/signals/*.ts) + registry.py; pipeline.py orchestrates;
-                    configs/ holds YAML experiment configs (incl. baseline.yaml, dev_synthetic.yaml);
-                    cli.py is the `python -m ta_ensemble` entry. tests/ guard lookahead-safety
-                    (test_no_lookahead.py) + signal accuracy (test_signal_accuracy.py).
-  news_sentiment/   Task 2 model (in development); depends on lidr_core. datasources/ (news adapters),
-                    ingest/collector.py (fan-out + dedup + JSONL cache), scoring/ (lexicon + FinBERT/LLM
-                    stubs), features/ (PIT-safe daily features), pipeline.py, configs/dev.yaml offline smoke.
-                    Layout mirrors ta_ensemble so the two models are comparable through results_log + the
-                    artifact contract.
-data/
-  raw/              cached OHLCV from yfinance (pickle, never expires — rm data/raw/*.pkl to refresh)
-  news/             news_sentiment collector cache — JSONL per (ticker, source), gitignored
-reports/            generated HTML reports (gitignored except .gitkeep)
-artifacts/
-  results_log.csv   cross-run results log (one row per backtest, tracked in git)
-  manifest.json     leaderboard — one entry per model_id with latest artifact + skill
-  predictions/<model_id>/<config>-<timestamp>.json   v2 artifacts, one subdir per model
-docs/
-  adr/              architecture decision records (durable) — 0001 = repo architecture + schema-v2 design
-  research/         durable research — data-sources.md = news/sentiment source comparison
-  plans/            disposable task plans (instruct Claude Code to self-delete on the task's merge)
-  signals.md        first-time-reader explainer for the six TA signals (+ signals/ PNGs)
-  sample-report/    committed sample of the HTML backtest report
-pyproject.toml      root: ruff + pytest config, dev install only — no top-level package
-Makefile            make install / backtest / test / lint / clean
-.github/workflows/test.yml   CI: installs all packages editable, then `make test` + `make lint`
-```
-
-## Conventions (read before writing code)
+The end-to-end walkthrough (config → data → signals → target → backtest → model → eval → results log → artifact) now lives in its canonical, human-facing home: [README → How the pipeline works](README.md#how-the-pipeline-works). It was moved out of this file so a new model developer finds it without reading the whole AI-facing playbook. Per-module detail lives in each module's docstring; the TA pipeline is wired together in `packages/ta_ensemble/src/ta_ensemble/pipeline.py::run_pipeline`.
 
 - **`main` is protected — all changes land via PR.** Direct pushes are blocked. Workflow: branch → commit → push → `gh pr create` → wait for green CI → `gh pr merge --squash --delete-branch`. Full procedure in [CONTRIBUTING.md → Workflow](CONTRIBUTING.md#workflow). Unlike the sibling lidr project there is no Vercel preview here — CI passing is the only required gate, because lidr-models doesn't auto-deploy anywhere.
 - **Python ≥3.10**, src-layout packages under `packages/`; ruff for lint + format (`line-length = 100`, `target-version = "py310"`). Snake_case modules and functions.
