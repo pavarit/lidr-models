@@ -81,7 +81,18 @@ class EodhdSource(BaseNewsSource):
             }
             resp = requests.get(_NEWS, params=params, timeout=30)
             resp.raise_for_status()
-            batch = resp.json() or []
+            payload = resp.json()
+            # EODHD signals auth / subscription failures with HTTP 200 and an
+            # {"error": ...} body (raise_for_status won't catch it), so check
+            # explicitly — otherwise the loop below would iterate the dict's
+            # keys and crash with an opaque AttributeError.
+            if isinstance(payload, dict) and payload.get("error"):
+                raise RuntimeError(
+                    f"EODHD news API error: {payload['error']!r}. Check that "
+                    "EODHD_API_TOKEN is correct and the Calendar & News add-on "
+                    "($19.99/mo) is active on the account."
+                )
+            batch = payload or []
             if not batch:
                 break
             for art in batch:

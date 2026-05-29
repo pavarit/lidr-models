@@ -57,6 +57,15 @@ class FinnhubSource(BaseNewsSource):
         resp = requests.get(_COMPANY_NEWS, params=params, timeout=30)
         resp.raise_for_status()
         payload = resp.json()
+        # Finnhub returns a flat array of articles; an {"error": ...} dict (with
+        # HTTP 200) signals an auth/plan problem. Guard so the loop doesn't
+        # iterate the dict's keys and crash with an opaque AttributeError.
+        if isinstance(payload, dict) and payload.get("error"):
+            raise RuntimeError(
+                f"Finnhub company-news API error: {payload['error']!r}. "
+                "Check that FINNHUB_API_KEY is correct and the plan grants "
+                "company-news access."
+            )
         items: list[NewsItem] = []
         for art in payload or []:
             ts = art.get("datetime")
