@@ -1,6 +1,6 @@
 # ADR 0001 — Multi-model repository architecture
 
-- **Status:** Proposed (planning only — no code moved yet)
+- **Status:** Accepted — implemented in Task 1 ([PR #23](https://github.com/pavarit/lidr-models/pull/23))
 - **Date:** 2026-05-27
 - **Deciders:** Boon
 - **Supersedes:** the implicit "one model = one repo (`lidr-ml`)" assumption
@@ -99,7 +99,7 @@ The JSON file a model produces and `lidr` consumes is the *contract* that decoup
   "schema_version": 2,
   "generated_at": "2026-05-27T22:05:00Z",
   "models": [
-    { "model_id": "ta_ensemble",   "model_version": "2.1.0", "latest_artifact": "predictions/ta_ensemble/baseline_six_signals_unweighted-20260527-220000.json", "oos_skill_score": -0.005, "beats_buy_and_hold": false },
+    { "model_id": "ta_ensemble",   "model_version": "0.2.0", "latest_artifact": "predictions/ta_ensemble/baseline_six_signals_unweighted-20260527-220000.json", "oos_skill_score": -0.005, "beats_buy_and_hold": false },
     { "model_id": "news_sentiment", "model_version": "0.1.0", "latest_artifact": "predictions/news_sentiment/dev-20260527-203000.json",                         "oos_skill_score": null,   "beats_buy_and_hold": null }
   ]
 }
@@ -144,7 +144,7 @@ These are explicit requirements, not nice-to-haves. Each maps to a structural ch
 
 Split into two handoff tasks for Claude Code:
 
-- **Task 1 — restructure** (mechanical, no behavior change): [`../plans/task-1-repo-restructure.md`](../plans/task-1-repo-restructure.md)
+- **Task 1 — restructure** (mechanical, no behavior change): **done**, shipped in [PR #23](https://github.com/pavarit/lidr-models/pull/23). The plan doc was deleted on merge per the disposable-plan-doc convention.
 - **Task 2 — build the news-sentiment model** (new logic): [`../plans/task-2-news-sentiment-model.md`](../plans/task-2-news-sentiment-model.md)
 
-Task 2 is blocked by Task 1.
+Task 2 was blocked by Task 1.

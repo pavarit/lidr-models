@@ -77,7 +77,7 @@ The HTML report contains: a config summary, top-line classification metrics with
 - Config-driven pipeline (YAML in, HTML report out)
 - Expanding-window walk-forward backtest (no lookahead, regression-tested)
 - Six signals: SMA crossover, RSI, MACD, Bollinger Bands, breakout, volume (the latter five ported from lidr's TS with numerical parity) — see [docs/signals.md](docs/signals.md) for what each one measures, with charts on real SPY data
-- One base model: logistic regression
+- Two base learners: logistic regression and LightGBM (both generic, in `lidr_core`)
 - yfinance loader with a synthetic-data alternative (`source: synthetic` in any config) for offline development
 - Transaction costs (5 bps default) baked into the equity curve
 - Report benchmarks the strategy against buy-and-hold (CAGR, Sharpe, max drawdown, per-year excess) with base-rate floors on log loss
@@ -99,7 +99,7 @@ The single-signal logistic model **underperforms buy-and-hold on every dimension
 - **Accuracy `0.556` < base rate `0.613`** — predicting "up" every day beats this model on raw correctness.
 - **Pred-rate `0.753` vs base-rate `0.613`** — model predicts "up" 75 % of the time despite reality being 61 %. Strongly biased even with `class_weight="balanced"`.
 
-That's the bar every future model has to clear. Full row in [`artifacts/results_log.csv`](artifacts/results_log.csv); raw artifact at `artifacts/predictions/ta_ensemble/baseline_v1-20260526-124439.json` (path adjusted after the 2026-05-27 monorepo restructure — older artifacts predate the per-model subdirectory and live directly under `artifacts/predictions/`).
+That's the bar every future model has to clear. The full row for this run (`run_id` `20260526-124439`) is in [`artifacts/results_log.csv`](artifacts/results_log.csv) — the git-tracked record of every backtest. (Per-run prediction JSONs under `artifacts/predictions/` are gitignored build outputs and aren't present on a fresh clone — see [Outputs](#outputs).)
 
 ## CLI
 
@@ -208,7 +208,7 @@ Single near-term goal: **prove the model has an edge over buy-and-hold** before 
 packages/
   lidr_core/        shared harness — backtest engine, eval, contract, protocols, base learners
   ta_ensemble/      the six TA signals + pipeline + configs (today's only complete model)
-  news_sentiment/   placeholder shell — built in Task 2
+  news_sentiment/   in development — Task 2 PR-A scaffolding (adapters, collector, scorer, features)
 data/raw/           cached OHLCV pulled from yfinance (regeneratable)
 docs/               ADR, research, sample report, signal explainer
 .github/workflows/  CI (test + lint on every push)

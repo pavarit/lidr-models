@@ -214,6 +214,18 @@ Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-mod
 
 ## Recent Changes
 
+### 2026-05-29 — Docs cleanup PR 1: fix stale facts & dead links (docs only)
+
+First of a four-PR documentation-cleanup arc that realigns the human-facing docs (README, ADR, package READMEs) with reality after they drifted behind this changelog. PR 1 is the pure-correction batch — every change fixes a fact that is simply wrong today; no new content or restructuring (those land in PRs 2–4). No code touched.
+
+**README.** "What's in the box" said *one base model: logistic regression* → corrected to *two base learners: logistic + LightGBM* (LightGBM shipped in [PR #20](https://github.com/pavarit/lidr-models/pull/20), and the config-schema table already lists it as a valid `model.type`, so the README contradicted itself). The SPY-baseline artifact pointer claimed the raw JSON lives at `predictions/ta_ensemble/baseline_v1-…json`, but that file is at the loose `predictions/` root *and* is gitignored (absent on a fresh clone) — repointed to the git-tracked `results_log.csv` row, noting per-run JSONs are gitignored build outputs. Project-layout line `news_sentiment/ placeholder shell` → in-development (PR-A scaffolding merged).
+
+**ADR 0001.** Status `Proposed (planning only — no code moved yet)` → `Accepted — implemented in Task 1 (PR #23)`. Fixed the dead Execution link to `../plans/task-1-repo-restructure.md` (deleted on merge) — now states Task 1 shipped in PR #23. Reconciled the example `model_version` (`2.1.0` in two places) with README + live manifest (`0.2.0`).
+
+**news_sentiment/README.md.** The Status section stated the *superseded* data-source plan as current (reddit/google_trends "real," tiingo "stub until PR-B"). The code is legitimately still PR-A, so rather than rewrite the adapter list, added a dated callout flagging the revised PR-B rewire (delete tiingo; reddit + google_trends → permanent stubs; add finnhub/apewisdom/eodhd) pointing at [`docs/research/data-sources.md`](docs/research/data-sources.md) + Active Task; updated the closing "needs Tiingo + Reddit credentials" line to the revised PR-B/PR-C split.
+
+Doc-only, no behavior change → no verification chart, and refresh-sample-report not triggered (none of report.py/metrics.py/baseline.yaml touched). Still to come in this arc: PR 2 (single-source the status narrative), PR 3 (docs index + config index + move the pipeline walkthrough into README), PR 4 (artifact-hygiene table + `make clean-predictions`), plus a separate leaderboard-mtime code fix.
+
 ### 2026-05-28 — Fix: backtests crash on a stock Windows console (cp1252 → UTF-8)
 
 **`make backtest` / `python -m ta_ensemble backtest <config>` now run on a stock Windows shell without `PYTHONIOENCODING=utf-8`.** Both pipelines print progress lines containing `→`; Windows' default console codec is cp1252, which can't encode it, so the run died with `UnicodeEncodeError` at `pipeline.py:57` *before any backtest work* — the env-var workaround noted in the horizon-spike entry below is no longer needed.
