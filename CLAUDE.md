@@ -173,6 +173,17 @@ Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-mod
 
 ## Recent Changes
 
+### 2026-05-29 — Docs cleanup PR 3: navigation & discoverability (docs only)
+
+Third of the four-PR docs-cleanup arc (PR 1 = stale facts, [#34](https://github.com/pavarit/lidr-models/pull/34); PR 2 = single-source status, [#35](https://github.com/pavarit/lidr-models/pull/35)). PR 3 makes the docs navigable and moves the best onboarding content out of this AI-facing file. No code touched.
+
+- **New `docs/README.md`** — a one-screen index of `docs/` (durable vs disposable) + a "start here" reading path. `docs/` previously had no map.
+- **New `packages/ta_ensemble/configs/README.md`** — indexes the 17 configs (5 baselines + the 12-file horizon sweep), names the current best (`baseline_six_signals_unweighted`, skill ≈ −0.005), and records that the horizon lever is closed.
+- **Moved "How the pipeline works" into the README** (canonical, human-facing home) and replaced this file's section with a pointer — one-fact-one-place. The 9-step walkthrough was the clearest end-to-end explanation in the repo but was gated behind this long file.
+- **README intro** gained a "New here?" signpost (humans → README + docs index; deep history → CLAUDE.md).
+
+Doc-only; refresh-sample-report not triggered. Recent Changes is at 12 entries — the oldest-5 fold plus consolidating the four same-day cleanup entries is deferred to PR 4. Remaining arc: PR 4 (artifact-hygiene table + `make clean-predictions`) + a separate leaderboard-mtime code fix.
+
 ### 2026-05-29 — Docs cleanup PR 2: single-source the project status (docs only)
 
 Second of the four-PR docs-cleanup arc (PR 1 = stale-fact/dead-link fixes, [#34](https://github.com/pavarit/lidr-models/pull/34)). PR 2 fixes the project's *current-status* story, which was scattered across the README baseline section, CLAUDE.md → Next Up / Active Task, Recent Changes, and `manifest.json` — and disagreed. No code touched.
