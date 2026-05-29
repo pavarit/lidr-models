@@ -1,4 +1,4 @@
-.PHONY: install backtest backtest-news test lint format clean clean-reports refresh-sample-report
+.PHONY: install backtest backtest-news test lint format clean clean-reports clean-predictions refresh-sample-report
 
 # Default config if none specified.
 CONFIG ?= packages/ta_ensemble/configs/dev_synthetic.yaml
@@ -37,6 +37,13 @@ clean:
 
 clean-reports:
 	find reports -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+
+# Clears local prediction artifacts (all gitignored build outputs) + the
+# regenerated manifest. Leaves the git-tracked artifacts/results_log.csv and
+# the .gitkeep placeholders alone.
+clean-predictions:
+	find artifacts/predictions -mindepth 1 -not -name .gitkeep -delete
+	rm -f artifacts/manifest.json
 
 # Re-runs the SPY baseline and copies the freshest report HTML into
 # docs/sample-report/ so README's "Example report" link stays in sync

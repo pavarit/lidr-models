@@ -164,7 +164,16 @@ A config is YAML. All fields below are accepted by [`packages/ta_ensemble/src/ta
 
 ## Outputs
 
-Every run writes three things:
+Every run writes three things. **Only `results_log.csv` is tracked in git** — the per-run reports, prediction JSONs, and `manifest.json` are all gitignored build outputs, so a fresh clone has none of them and they don't need cleaning up to commit. Locally they accumulate (45+ loose JSONs is normal); clear them with the `make clean-*` targets.
+
+| Output | Path | Tracked in git? | Notes |
+| --- | --- | --- | --- |
+| HTML report | `reports/<run>/report.html` | No (gitignored) | One dir per run. Clear with `make clean-reports`. |
+| Prediction JSON | `artifacts/predictions/<model_id>/<run>.json` | No (gitignored) | Written only when `output.predictions_json: true`. Older runs predating the monorepo restructure sit loose under `artifacts/predictions/`. Clear with `make clean-predictions`. |
+| Leaderboard | `artifacts/manifest.json` | No (gitignored) | Regenerated each run from whatever artifacts are on disk. **Caveat:** "latest" is picked by file mtime, so a `dev_synthetic` smoke run can headline a model — don't read it as the authoritative best. (A code fix to the selection rule is tracked separately.) |
+| Results log | `artifacts/results_log.csv` | **Yes** | The durable cross-run record; one row per backtest, accumulates across machines. This is the authoritative "what has been run." |
+
+The three per-run outputs:
 
 ### HTML report — `reports/<config-name>-<timestamp>/report.html`
 
