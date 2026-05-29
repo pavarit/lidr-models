@@ -212,6 +212,29 @@ Non-obvious things that bit us. Each entry earned its place by causing a real pr
 - **`class_weight="balanced"` in the baseline is actively harmful, not just "distorts probabilities."** Empirically (2026-05-27 sanity check, see Recent Changes): removing it on the six-signal logistic config shrank the distance from no-skill baseline ~7× (`skill_score` -0.0374 → -0.0051). The reweighting was forcing confidently-wrong predictions on a 60/40 problem. Removing it makes the model "predict ≈base_rate every day" (a no-skill baseline), which is mechanically aggregate-calibrated but useless to lidr because there's no day-to-day variation. **Default new configs to `class_weight=None`**; revisit only if a future model class shows genuine class-balance trouble. Calibration via Platt/isotonic is still needed for shipping any probability artifact to lidr (on the roadmap: calibration).
 - **`artifacts/results_log.csv` rows from before 2026-05-27 are slightly off.** The expanding-window backtester used an inclusive right endpoint on the test slice, so the boundary date between split N and split N+1 (`test_end` of N == `test_start` of N+1) was predicted twice and double-compounded in the equity curve. ~0.3% of rows affected; tiny effect on every metric (`accuracy`, `log_loss`, `skill_score`, `cagr`, `sharpe`, `n_oos`). Fixed by making the right endpoint exclusive except on the final split — see `lidr_core/backtest/engine.py::expanding_window_backtest` and `packages/lidr_core/tests/test_backtest_engine.py`. Pre-fix rows weren't re-run; treat any cross-row comparison that straddles 2026-05-27 with this in mind.
 
+## Diagnostic Playbook
+
+Durable, task-agnostic guidance for running and reporting model experiments here. Each rule was learned from a specific PR (cited inline); the dated Recent Changes entries that produced them point here instead of restating them. **New lessons of this kind go here, not buried in a dated entry** — see Maintenance Instructions.
+
+### Model-PR diagnostic checks
+
+Run these before publishing any "model X has (no) edge" conclusion. They rule out failure modes that have actually bitten model PRs here; the suite was built during the LightGBM checkpoint ([PR #20](https://github.com/pavarit/lidr-models/pull/20)).
+
+1. **Column-order spot check** — confirm `classes_ == [0, 1]` and that in-sample P(class=1) is higher on up-days than down-days. Five lines; rules out silently reading P(down) as P(up), which inverts every conclusion. Trivially passes for sklearn-conforming models, but cheap insurance.
+2. **In-sample fit check** — training-set accuracy must be meaningfully above base rate. If it isn't, the model isn't fitting at all, and an OOS collapse is a fit failure, not a generalization failure.
+3. **Hyperparameter sensitivity** — for a low-SNR problem, expect monotonic behavior in capacity: tiny config → no-skill floor; default → confidently wrong; large → more confidently wrong. Non-monotonic ⇒ the result is hyperparameter-noise, not signal.
+4. **Calibration wrapper** — for any tree ensemble emitting `predict_proba`, run with and without `CalibratedClassifierCV`. The delta is large (LightGBM moved skill_score -0.148 → -0.004); without it, "the model fits noise" is conflated with "the model has miscalibrated probabilities."
+5. **Seed-stability sweep** — only informative once subsampling is enabled. With LightGBM defaults (`feature_fraction = bagging_fraction = 1.0`) there's no randomness consuming `random_state`, so all seeds are bit-identical and the sweep proves nothing. The hyperparameter sweep (#3) is the stronger robustness check.
+
+### Reporting & workflow lessons
+
+- **Never write interpretation before you've generated the data it interprets.** Drafting the "reading this" narrative from memory has contradicted the actual numbers three times (six-signal [PR #15](https://github.com/pavarit/lidr-models/pull/15), the verify-script bug, the LightGBM per-period table). Generate the table first, then write from it — and sanity-check chart numbers against the logged metrics.
+- **Don't conflate accuracy with skill when `base_rate` is far from 0.5.** Accuracy 0.557 looks fine until you notice base_rate is 0.613 (predict-always-up scores 0.613). `skill_score` (= 1 − log_loss/base_logloss) controls for this; report it beside accuracy whenever both are visible. (Same reason `base_rate`/`pred_rate` sit beside accuracy in the report — see How the pipeline works.)
+- **When a result is surprising or contradicts a prior, dig before publishing.** Reviewer pushback ("Are you sure?") drove the most valuable reframes in both the six-signal and LightGBM PRs — the pred_rate/skill_score story and the "features/target is the bottleneck, not the model class" conclusion both came out of digging. When reporting a negative result, build in at least one "what would convince me this is wrong?" round before declaring done.
+- **Chart-vs-log cross-check on every one-off verify script.** A verify script that re-derives metrics is itself unverified code: PR #15's first draft read `prices["Close"]` (the loader lowercases columns, so the fallback silently grabbed `open`) and drew an equity curve ending at 0.6× while results_log said 2.47×. Cross-checking the chart against the logged final equity catches this fast.
+- **Two charts beat one when the data spans years.** A full-window log-scale equity curve compresses recent behavior into a few pixels; add a recent-window linear zoom so the last year or two stays legible.
+- **Revise a Gotcha in place when an experiment contradicts it.** The `class_weight=balanced` bullet went from "distorts predict_proba" (descriptive) to "actively harmful, default `class_weight=None`" with concrete skill_score numbers once the unweighted run showed a 7× swing. An empirical update that contradicts a Gotcha's claim is the moment to rewrite it, not append a caveat elsewhere.
+
 ## Next Up
 
 Priority order, framed around a single near-term goal: **prove the model has an edge over buy-and-hold** before building any serving/integration plumbing. As of 2026-05-27, neither logistic nor LightGBM beats no-skill on the six TA signals → 5d-forward-return-sign target (see Recent Changes → LightGBM checkpoint). The diagnostic finding was that the model class is *not* the bottleneck — three independent well-behaved configs (unweighted logistic, tiny LightGBM, calibrated LightGBM) all cluster at the no-skill floor. So the next move is to attack the target/feature setup, not try more models.
@@ -255,6 +278,12 @@ Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-mod
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-28 — CLAUDE.md context-bleed trim, batch 2 of 3: Diagnostic Playbook extraction (docs only)
+
+Moved durable model-PR guidance out of three decaying dated entries into a new always-loaded section. Second of the three-batch bleed arc ([batch 1 = PR #29](https://github.com/pavarit/lidr-models/pull/29)).
+
+The diagnostic-checks list and workflow-lessons paragraphs were buried inside the LightGBM checkpoint, six-signal baseline, and `class_weight=None` entries — task-agnostic, but where future sessions rarely re-read it and where the ≤10-entry fold rule would eventually archive it. Extracted into a top-level **Diagnostic Playbook** (between Gotchas and Next Up): *Model-PR diagnostic checks* (the five rule-outs) + *Reporting & workflow lessons* (the six rules), each a stable imperative rule citing its originating PR. Chose a top-level section over an external doc deliberately — the bleed problem was decay, not location, and an external file would just reintroduce "out of sight, out of mind." The three dated entries now cross-reference the playbook and keep only their entry-specific findings; Maintenance Instructions gained a rule pinning where new lessons of this kind go. Batch 3 (folder-map condensation) stays deferred.
 
 ### 2026-05-28 — CLAUDE.md context-bleed trim, batch 1 of 3 (docs only)
 
@@ -352,18 +381,9 @@ Shipped LightGBM as the second base learner ([PR #20](https://github.com/pavarit
 
 When given enough freedom *and* calibrated probabilities, the model learns to predict the prior. There's no day-to-day signal in these six features against the 5-day-forward-return-sign target. **The bottleneck is the features/target, not the model class.** Roadmap pivoted: Next Up #1 was "LightGBM" (this entry replaces it); the new #1 is target/feature reformulation. Stacking (was #2) is parked under the edge gate — a stacker over two no-skill base learners inherits no signal.
 
-**Diagnostic checks worth keeping in mind for future PRs.**
-1. **Column-order spot check** (`classes_ = [0,1]` + in-sample P(class=1) higher on up-days than down-days) — cheap rule-out for "are we silently reading P(down) as P(up)?". Trivially passes for sklearn-conforming models but takes 5 lines to verify; the cost of skipping is silent inversion of every conclusion.
-2. **In-sample fit check** — accuracy on the model's own training data must be meaningfully above base rate, else the model isn't fitting at all and the OOS collapse is a fit failure not a generalization failure.
-3. **Seed-stability sweep** — for LightGBM with default settings, this is *trivial* (all seeds bit-identical) because `feature_fraction = bagging_fraction = 1.0` means there's no randomness consuming `random_state`. To get real seed-stability evidence need to enable subsampling first. Hyperparameter sweep is the stronger robustness check.
-4. **Hyperparameter sensitivity** — for a low-SNR problem, expect monotonic behavior in capacity: tiny config → no-skill floor; default → confidently wrong; large → even more confidently wrong. If the relationship isn't monotonic, the result is hyperparameter-noisy.
-5. **Calibration wrapper** — for any tree ensemble producing `predict_proba`, run with and without `CalibratedClassifierCV`. The delta is large; without it, log-loss-based conclusions about "the model fits noise" are conflated with "the model has miscalibrated probabilities."
+**Diagnostic suite + reporting lessons → [Diagnostic Playbook](#diagnostic-playbook).** This PR established the five model-PR diagnostic checks (column-order spot check, in-sample fit, hyperparameter sensitivity, calibration wrapper, seed-stability sweep) and reinforced the reporting lessons (write interpretation only after generating the data; reviewer pushback drives the best reframes of a negative result). Both are task-agnostic and now live in the Diagnostic Playbook rather than here.
 
 **Per-period breakdown surfaced a regime story the full-window aggregate hides.** LightGBM is the *worst* strategy in 2024 (+14% vs B&H +26%) but the *best* in 2025 (+22% vs +17%) and Q1 2026 (+0.0% vs -4.5%). Per-period skill_score confirms it's not skill — Q1 2026 LightGBM (-0.192) is essentially tied with unweighted logistic (-0.194). LightGBM has a structural bias toward sometimes-cash positions: helps when down/choppy, hurts when up. Not signal.
-
-**Workflow lesson reinforced (third time now).** First draft of the per-period "reading this" narrative was written from memory, *before* I generated the per-period numbers, and contradicted them on 2025 and Q1 2026. Caught it during review and rewrote from the actual table. Same lesson as the six-signal PR (#15) and the chart-vs-log cross-check from the verify-script bug. **Never write interpretation before you've generated the data it interprets, and sanity-check chart numbers against the logged metrics.**
-
-**Pacing observation worth keeping.** Reviewer pushback ("are you sure?", "how do I trust this?", "add the logistic lines and per-period table") was responsible for *all* of the most valuable framing changes — the diagnostic suite, the calibration reframe, the per-period regime story. Headline framing pre-pushback was "LightGBM fits noise"; post-pushback was "no model has signal because the features/target is the bottleneck." Different conclusions, different next moves. Suggests: when reporting a negative result, build in at least one round of "what would convince me this is wrong?" before declaring done.
 
 ### 2026-05-27 — `class_weight=None` sanity check before LightGBM
 
@@ -382,7 +402,7 @@ Quick sanity check motivated by the Gotcha bullet about `class_weight=balanced` 
 
 So: `class_weight=balanced` was forcing confidently-wrong predictions (anti-informative); removing it lets the model collapse to no-skill baseline; the linear-features-via-logistic setup still can't extract day-to-day signal from these six features. **Recommendation for LightGBM stands stronger.** The failure mode is now clearly about the linear model's inability to express feature interactions, not class balance.
 
-**Gotcha bullet strengthened.** Was "distorts predict_proba" (descriptive); now "actively harmful, default `class_weight=None`" with concrete skill_score numbers. Empirical updates that contradict a Gotcha's claim are the right time to revise it in place.
+**Gotcha bullet strengthened** — was "distorts predict_proba" (descriptive), now "actively harmful, default `class_weight=None`" with concrete skill_score numbers. The general rule (an experiment contradicting a Gotcha is the moment to rewrite it in place) now lives in the [Diagnostic Playbook](#diagnostic-playbook).
 
 **Dup-date fix verified benign on headline metrics.** Re-ran `baseline_six_signals.yaml` post-fix at `run_id=20260527-135054` → `skill_score = -0.0374` (same as the pre-fix row `20260527-120203` to 4 decimals). The dup-date Gotcha's "below the noise floor" claim is now empirically confirmed for this config, not just estimated. Both rows kept in results_log as a reference comparison.
 
@@ -407,11 +427,7 @@ In probability space the two models are essentially **equally non-skilled** — 
 
 **Conclusion: the bottleneck is the linear-model assumption, not the feature count.** Adding five orthogonal signals didn't move skill_score and made accuracy *worse* on the full window — but modestly improved recent-period behavior. Next move per the roadmap is LightGBM (now Active Task).
 
-**Workflow lessons worth keeping.**
-- **Don't conflate accuracy with skill when `base_rate` is far from 0.5.** Accuracy of 0.557 sounds OK until you notice base_rate is 0.613 (predict-always-up gets 0.613). `skill_score` (= 1 − log_loss / base_logloss) controls for this; report it next to accuracy whenever both are visible.
-- **When a result is surprising or contradicts a prior, dig before publishing.** Initial PR framing led with "six is worse"; the user pushed back ("Are you sure?"), the diagnostic exposed the pred_rate/skill_score story, the PR was reframed before merge. The reframe was the more interesting finding.
-- **Two charts beat one when the data spans years.** The full-window log chart compresses recent behavior into pixels; a 2024-onwards linear zoom (`docs/_pr_evidence/six_signal_baseline/chart_recent.png` at the time of merge, then removed in cleanup) is where the actual recent behavior is legible.
-- **Aborted bug worth flagging.** The verify script's first version had `prices["Close"]` (capital C). The yfinance loader normalizes columns to lowercase (`loaders.py:77`); the script's fallback `prices.iloc[:, 0]` silently returned the `open` column, producing an equity curve that ended at ~0.6× when results_log said 2.47×. Caught by sanity-checking the chart against the logged final equity. Lesson: chart-vs-log cross-check is a fast first-pass test for any one-off verification script that re-derives metrics.
+**Workflow lessons → [Diagnostic Playbook](#diagnostic-playbook).** The reporting lessons this PR produced (and the diagnostic dig the reviewer pushback triggered) now live there: don't conflate accuracy with skill when base_rate ≠ 0.5; dig before publishing a surprising result; two charts beat one for multi-year data; chart-vs-log cross-check on every one-off verify script (this PR's `prices["Close"]`-grabbed-`open` bug, equity ending 0.6× vs results_log's 2.47×, is the cautionary tale).
 
 ## Archived Summary
 
@@ -459,6 +475,7 @@ If you (a future AI assistant joining this project) make meaningful changes, als
 
 - **Keep evergreen sections current.** Project Goal, Architecture, Stack, How the pipeline works, Folder map, Conventions, Key Decisions, Gotchas, Next Up should reflect reality. If your work invalidates a fact in any of these sections, update it before ending the session.
 - **Each fact lives in one section.** Conventions = the rule. Key Decisions = why we chose X over Y. Gotchas = what bit us. If you find yourself writing the same fact in two places, pick the canonical home and cross-reference from the other.
+- **Durable model-PR diagnostics and reporting lessons go in the Diagnostic Playbook, not a dated entry.** When a PR teaches a task-agnostic lesson about how to run or report a model experiment, add it to the Diagnostic Playbook in stable rule form and have the Recent Changes entry cross-reference it. Dated entries decay and eventually fold into Archived Summary; the playbook is where future sessions actually look.
 - **Append a dated entry to Recent Changes for each session that produces real changes.** Use a `### YYYY-MM-DD — short title` header followed by a paragraph describing what was done and why. Include decisions and rationale future-Claude would benefit from knowing.
 - **When a Next Up item ships, remove it (don't strike it through) and renumber the rest.** Document the completion in Recent Changes — that's the single source of truth for "what's been done." Keeping completed items in Next Up duplicates information and makes the section grow monotonically. Cross-references to Next Up items elsewhere in this file should use **names** ("see roadmap: LightGBM"), not numbers, so renumbering doesn't break references. Historical references in Recent Changes (e.g., "Next Up #3 done") are fine to leave as-is — they describe state at the time.
 - **Cross-link to lidr.** If a change here affects the integration with lidr (artifact format, signal parity, what the website should consume), update lidr's CLAUDE.md too in the same session.
