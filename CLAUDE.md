@@ -214,6 +214,14 @@ Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-mod
 
 ## Recent Changes
 
+### 2026-05-28 — Fix: backtests crash on a stock Windows console (cp1252 → UTF-8)
+
+**`make backtest` / `python -m ta_ensemble backtest <config>` now run on a stock Windows shell without `PYTHONIOENCODING=utf-8`.** Both pipelines print progress lines containing `→`; Windows' default console codec is cp1252, which can't encode it, so the run died with `UnicodeEncodeError` at `pipeline.py:57` *before any backtest work* — the env-var workaround noted in the horizon-spike entry below is no longer needed.
+
+Fixed at the CLI layer rather than by de-Unicode-ing print statements (whack-a-mole, and the `→` is intentional in the output): new shared helper `lidr_core.console.ensure_utf8_stdout()` reconfigures stdout/stderr to UTF-8, called once at the top of both `ta_ensemble/cli.py` and `news_sentiment/cli.py`. It's a no-op when the stream is already UTF-8 or can't be reconfigured (e.g. a captured buffer under pytest), so it's safe everywhere. Lives in `lidr_core` because both model packages need it (the harness-reuse convention). Residual edge case: a script that calls `run_pipeline` directly (bypassing the CLI) under cp1252 would still crash — call `ensure_utf8_stdout()` first if you write one.
+
+Infra fix, no behavior/output change → no verification chart needed. Verified by reproducing the crash in a cp1252 PowerShell with `PYTHONIOENCODING` unset (negative control: bare `print('→')` raises `UnicodeEncodeError`), then running the six-signal backtest in the same shell to completion. 44/44 tests pass, `ruff check` clean.
+
 ### 2026-05-28 — Horizon spike: longer target horizons make the TA model worse, not better
 
 **Plain result: lengthening the prediction horizon doesn't help — it hurts.** Executed Next Up #1 direction (a). Swept `target.horizon_days ∈ {5, 10, 20, 60}` crossed with three model classes — unweighted logistic, `class_weight=balanced` logistic, and LightGBM — on the six-signal TA model, SPY 2005→2026-05. 12 new configs (`horizon_h{N}_{logistic,logistic_weighted,lightgbm}.yaml`), 12 new `results_log.csv` rows. Boon added weighted logistic as a third class and dropped the original h1 from the plan ({1,5,10,20,60} → {5,10,20,60}).

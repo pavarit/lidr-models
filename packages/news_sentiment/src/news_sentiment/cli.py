@@ -6,10 +6,15 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from lidr_core.console import ensure_utf8_stdout
 
 from news_sentiment.datasources import REGISTRY as SOURCE_REGISTRY
 from news_sentiment.features import REGISTRY as FEATURE_REGISTRY
 from news_sentiment.pipeline import run_pipeline
+
+# Make `print(...)` of non-ASCII (e.g. the pipeline's `→`) work on a stock
+# Windows cp1252 console without requiring PYTHONIOENCODING=utf-8.
+ensure_utf8_stdout()
 
 app = typer.Typer(
     add_completion=False,

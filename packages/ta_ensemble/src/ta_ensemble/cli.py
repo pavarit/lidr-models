@@ -6,9 +6,14 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from lidr_core.console import ensure_utf8_stdout
 
 from ta_ensemble.pipeline import run_pipeline
 from ta_ensemble.signals import REGISTRY
+
+# Make `print(...)` of non-ASCII (e.g. the pipeline's `→`) work on a stock
+# Windows cp1252 console without requiring PYTHONIOENCODING=utf-8.
+ensure_utf8_stdout()
 
 app = typer.Typer(
     add_completion=False,
