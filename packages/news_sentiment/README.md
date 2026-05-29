@@ -9,36 +9,44 @@ apples-to-apples.
 sentiment, attention spikes, and post-event drift. **Not** a latency edge; we
 are always late to a single headline by construction.
 
-## Status (PR-A — scaffolding + Phase 0 free adapters)
+## Status (PR-B — data-source rewire + FinBERT/LLM scoring)
 
 - Package layout, `DataSource` and `Feature` registries wired against
   `lidr_core` protocols.
-- Free data adapters: `synthetic`, `edgar`, `gdelt`, `reddit`, `google_trends`.
-  Real implementations; heavy deps (`praw`, `pytrends`) are lazy-imported so
-  the offline dev path works without them. `tiingo` is a stub that raises
-  `NotImplementedError`.
+- **Data adapters** (all real, HTTP-only via `requests` — no per-adapter extras):
+  - `synthetic` — offline deterministic items for the dev smoke path.
+  - `edgar`, `gdelt` — free, no key (PR-A).
+  - `finnhub` — free personal-use tier, 1yr US company news (`FINNHUB_API_KEY`).
+  - `apewisdom` — free, no auth, **live-snapshot** retail-attention; emits a
+    per-day snapshot the collector forward-collects into history.
+  - `eodhd` — paid ($19.99/mo) historical news + per-article sentiment
+    (`EODHD_API_TOKEN`); each request bills **5 API calls** — respect the quota.
+  - `hn` — free Hacker News (Algolia), tech-skewed supplement.
+  - `reddit`, `google_trends` — **permanent stubs** that raise with the reason
+    (Reddit blocked by the Responsible Builder Policy; pytrends archived
+    2025-04-17). Kept registered so a stale config gets the reason, not a
+    `KeyError`. `tiingo` is **deleted** ($30/mo for only 3mo history).
+    Rationale: [`docs/research/data-sources.md`](../../docs/research/data-sources.md).
 - Collector with timestamped on-disk cache + dedup-by-content-hash so the data
-  clock starts now (Reddit history can't be backfilled — every day of delay
-  is lost training data).
-- Scoring: deterministic `lexicon` (Loughran-McDonald-style word counts) works
-  offline. `finbert` and `llm` are stubs with the cache + budget-cap +
-  spend-log scaffolding in place; both raise until PR-B.
+  clock starts now (live sources like Apewisdom can't be backfilled — every day
+  of delay is lost training data).
+- **Scoring** (heavy deps lazy-imported; offline path needs none):
+  - `lexicon` — deterministic Loughran-McDonald word counts, dependency-free.
+  - `finbert` — local `ProsusAI/finbert` (`[scoring]` extra, ~440MB on first
+    use); `sentiment = pos − neg`, `confidence = max softmax`.
+  - `llm` — live Anthropic call (`[llm]` extra, `ANTHROPIC_API_KEY`) inside the
+    cache + per-run budget cap + spend-log harness; degrades to `lexicon` on
+    budget exhaustion or a malformed response instead of crashing.
+  - `hybrid` — FinBERT bulk pass, escalating only low-confidence items to the
+    LLM (the cost-controlled FinBERT + LLM design).
 - Three features: `sentiment_level`, `sentiment_momentum`, `abnormal_mention_volume`.
 - `configs/dev.yaml` runs the full pipeline on synthetic prices + synthetic
   items end-to-end (no internet, no keys).
 
-> **Data-source plan revised (2026-05-28) — read before extending the adapters.**
-> The adapters listed above are the shipped PR-A set. PR-B rewires the data
-> layer around a validated stack: `tiingo` is **deleted**, `reddit` +
-> `google_trends` become **permanent stubs** (Reddit's Responsible Builder
-> Policy blocks research collection; pytrends was archived 2025-04-17), and
-> `finnhub` / `apewisdom` / `eodhd` adapters are added. See
-> [`docs/research/data-sources.md`](../../docs/research/data-sources.md) and
-> CLAUDE.md → Active Task for the rationale.
-
-PR-A intentionally does **not** ship a real `news_v0.yaml` backtest or a
-news-vs-TA comparison. Those land in PR-B (data-source rewire + FinBERT/LLM
-scoring) and PR-C (real backtest + comparison).
+PR-B intentionally does **not** ship a real `news_v0.yaml` backtest or a
+news-vs-TA comparison — that's PR-C (real backtest + comparison). Apewisdom
+features are excluded from PR-C's first config because the forward-collected
+store has no history yet.
 
 ## CLI
 
@@ -57,8 +65,8 @@ lookahead test asserts against them.
 
 ### 1. A raw item out of any DataSource
 
-Every adapter (`synthetic`, `edgar`, `gdelt`, `reddit`, `google_trends`,
-`tiingo`) returns a list of `NewsItem` (`src/news_sentiment/types.py`):
+Every adapter (`synthetic`, `edgar`, `gdelt`, `finnhub`, `apewisdom`, `eodhd`,
+`hn`) returns a list of `NewsItem` (`src/news_sentiment/types.py`):
 
 ```python
 NewsItem(
@@ -149,9 +157,10 @@ the smoke test validates every produced artifact against it.
 ```
 src/news_sentiment/
   cli.py  pipeline.py  types.py
-  datasources/    synthetic + edgar + gdelt + reddit + google_trends + tiingo
+  datasources/    synthetic + edgar + gdelt + finnhub + apewisdom + eodhd + hn
+                  (+ reddit / google_trends permanent stubs)
   ingest/         collector — timestamped on-disk cache, dedup by content hash
-  scoring/        lexicon (working) + finbert / llm (stubs, real interfaces)
+  scoring/        lexicon + finbert + llm + hybrid
   features/       registry + sentiment_level / sentiment_momentum / abnormal_mention_volume
   configs/        dev.yaml (offline smoke)
 ```

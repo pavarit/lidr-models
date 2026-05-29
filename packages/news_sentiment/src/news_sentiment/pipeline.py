@@ -81,9 +81,10 @@ def run_pipeline(config_path: Path) -> PipelineResult:
     # 3. Scoring -------------------------------------------------------------
     scorer_cfg = dict(config["news"]["scorer"])
     scorer_name = scorer_cfg.pop("name")
-    # LLM scorer wants the spend log + cache + run_id wired through.
+    # LLM-backed scorers want the spend log + cache + run_id wired through.
+    # The hybrid scorer forwards these into its LLM sub-scorer.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    if scorer_name == "llm":
+    if scorer_name in ("llm", "hybrid"):
         scorer_cfg.setdefault(
             "cache_path", PROJECT_ROOT / "data" / "news" / "_llm_cache.jsonl"
         )

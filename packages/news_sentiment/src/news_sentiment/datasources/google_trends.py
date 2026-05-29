@@ -1,57 +1,34 @@
-"""Google Trends (pytrends) attention-proxy adapter.
+"""Google Trends (pytrends) adapter — **permanent stub.**
 
-Google Trends gives a relative search interest number per day for a query.
-Unlike the other adapters, the unit here is not "an article was published";
-it's "this much attention was paid on this day." We emit one synthetic
-``NewsItem`` per day with the interest value in ``meta['interest']`` and an
-empty body, so downstream features can pick it up uniformly.
+Google Trends is **out** of the data stack. The ``pytrends`` client was
+**archived 2025-04-17** and is no longer maintained; it returns 429s at modest
+volume and the community ``pytrends-modern`` fork has the same unofficial-API
+fragility. We drop search-interest signals rather than replace them — Apewisdom
+covers retail-attention more directly than a generic search proxy.
 
-pytrends is an unofficial client and rate-limits; lazy-imported.
+If a non-investor attention proxy ever matters again, SerpAPI's Trends endpoint
+(~$50+/mo) or Glimpse are the paid options now that pytrends is dead.
+
+Full reasoning: ``docs/research/data-sources.md``. The class is kept (rather
+than deleted) so the registry can name it and surface the reason if a stale
+config references it; it raises immediately on use.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime
 
 from news_sentiment.datasources.base import BaseNewsSource
 from news_sentiment.types import NewsItem
+
+_REASON = (
+    "pytrends was archived 2025-04-17; see docs/research/data-sources.md. "
+    "'apewisdom' covers retail-attention more directly."
+)
 
 
 class GoogleTrendsSource(BaseNewsSource):
     name = "google_trends"
 
-    def __init__(self, geo: str = "US", timeframe_hint: str = "all") -> None:
-        self.geo = str(geo)
-        self.timeframe_hint = str(timeframe_hint)
-
     def fetch_raw(self, ticker: str, start: datetime, end: datetime) -> list[NewsItem]:
-        try:
-            from pytrends.request import TrendReq
-        except ImportError as exc:
-            raise ImportError(
-                "GoogleTrendsSource requires the optional 'trends' extra. "
-                "Install with: pip install -e ./packages/news_sentiment[trends]"
-            ) from exc
-
-        timeframe = f"{start.strftime('%Y-%m-%d')} {end.strftime('%Y-%m-%d')}"
-        pytrends = TrendReq(hl="en-US", tz=0)
-        pytrends.build_payload([ticker], timeframe=timeframe, geo=self.geo)
-        df = pytrends.interest_over_time()
-        items: list[NewsItem] = []
-        if df is None or df.empty:
-            return items
-        for ts, row in df.iterrows():
-            interest = float(row.get(ticker, 0) or 0)
-            published = datetime.combine(ts.date(), time(23, 59, 59))
-            items.append(
-                NewsItem(
-                    ticker=ticker,
-                    published_at=published,
-                    source=self.name,
-                    title=f"{ticker} search interest {interest:.0f}",
-                    body="",
-                    url="",
-                    meta={"interest": interest, "geo": self.geo},
-                )
-            )
-        return items
+        raise NotImplementedError(_REASON)

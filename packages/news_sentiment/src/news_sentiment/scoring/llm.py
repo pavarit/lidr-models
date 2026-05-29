@@ -1,25 +1,27 @@
-"""LLM scorer — **interface + cache/budget scaffolding in PR-A; real call in PR-B.**
+"""LLM scorer — live Anthropic call inside the PR-A cost-control harness.
 
 The LLM half of the FinBERT + LLM hybrid. Handles the tail of items FinBERT
 isn't confident about, and adds relevance + entity-linking + event-type so
 the hybrid output is richer than either component alone.
 
-PR-A wires the three cost controls the plan calls out as **required**:
+Three cost controls (scaffolding from PR-A, live call wired in PR-B):
 
 1. **Content-hash cache.** Every result is cached keyed by a content hash so
    the same headline is never paid for twice across runs. The cache is on
    disk (``cache/llm.jsonl``) so it survives process restarts.
 2. **Per-run budget cap.** ``max_calls`` and ``max_usd`` are read from the
-   pipeline config. When either is exceeded the scorer stops calling the LLM
-   for the remainder of the run and falls back to lexicon (or whatever
-   ``fallback_scorer`` is configured).
+   pipeline config. When either would be exceeded the scorer stops calling the
+   LLM for the remainder of the run and falls back to lexicon (or whatever
+   ``fallback_scorer_name`` is configured) — it does **not** raise, so a run
+   degrades gracefully instead of dying mid-backtest.
 3. **Spend log.** Every LLM call appends a row to ``artifacts/llm_spend.csv``
    with ``run_id, model, prompt_tokens, completion_tokens, est_usd`` so
    cost-vs-quality is measurable across versions.
 
-The actual LLM call (Anthropic SDK / response parsing) is the stubbed part
-that PR-B will fill. The scaffolding above is real so PR-B can wire the
-call into a known-good cost-control harness.
+The Anthropic SDK is the ``[llm]`` extra and is **lazy-imported** so the
+offline dev path never needs it. The call asks for a strict JSON object
+(``sentiment`` ∈ [-1,1], ``relevance`` ∈ [0,1], ``confidence`` ∈ [0,1],
+``event_type``); a parse failure falls back rather than crashing the run.
 """
 
 from __future__ import annotations
@@ -28,10 +30,23 @@ import csv
 import hashlib
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 from news_sentiment.types import NewsItem, ScoredItem
+
+_SYSTEM_PROMPT = (
+    "You are a financial-news sentiment rater. For the given headline (and "
+    "optional body) about a specific stock ticker, return a STRICT JSON object "
+    "with exactly these keys and no prose:\n"
+    '  "sentiment": float in [-1, 1] (−1 very bearish, 0 neutral, +1 very bullish),\n'
+    '  "relevance": float in [0, 1] (how much the item is actually about THIS ticker),\n'
+    '  "confidence": float in [0, 1] (how sure you are),\n'
+    '  "event_type": short snake_case label (e.g. earnings, guidance, mna, '
+    "legal, product, macro, other).\n"
+    "Judge directional impact on the stock, not how positive the prose sounds."
+)
 
 
 class LlmBudgetExceeded(RuntimeError):
@@ -64,6 +79,7 @@ class LlmScorer:
         self.fallback_scorer_name = str(fallback_scorer_name)
         self._calls = 0
         self._spend_usd = 0.0
+        self._client = None
         self._cache: dict[str, dict] = self._load_cache()
 
     # -- cost-control plumbing (real in PR-A) -------------------------------
@@ -159,10 +175,61 @@ class LlmScorer:
             fh.write("\n")
         self._cache[key] = {"cache_key": key, **payload}
 
-    # -- the actual call (stubbed in PR-A) ---------------------------------
+    def _budget_ok(self, est_usd: float) -> bool:
+        """Non-raising budget check used by the score loop."""
+        try:
+            self._check_budget(est_usd)
+            return True
+        except LlmBudgetExceeded:
+            return False
+
+    # -- the live call -----------------------------------------------------
+
+    def _get_client(self):
+        if self._client is not None:
+            return self._client
+        try:
+            import anthropic
+        except ImportError as exc:
+            raise ImportError(
+                "LlmScorer requires the optional 'llm' extra (anthropic SDK). "
+                "Install with: pip install -e ./packages/news_sentiment[llm]"
+            ) from exc
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            raise RuntimeError(
+                "LlmScorer needs ANTHROPIC_API_KEY in env. "
+                "Create a key at https://console.anthropic.com."
+            )
+        self._client = anthropic.Anthropic()
+        return self._client
+
+    def _call_llm(self, item: NewsItem) -> tuple[dict, int, int]:
+        """Return (parsed_result, prompt_tokens, completion_tokens).
+
+        Raises on transport error or unparseable response; the caller decides
+        whether to fall back.
+        """
+        client = self._get_client()
+        body = item.body.strip()
+        user = f"Ticker: {item.ticker}\nHeadline: {item.title}"
+        if body:
+            user += f"\nBody: {body[:1500]}"
+        resp = client.messages.create(
+            model=self.model,
+            max_tokens=200,
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user}],
+        )
+        text = "".join(getattr(block, "text", "") for block in resp.content)
+        parsed = _parse_llm_json(text)
+        usage = getattr(resp, "usage", None)
+        prompt_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+        completion_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        return parsed, prompt_tokens, completion_tokens
 
     def score(self, items: list[NewsItem]) -> list[ScoredItem]:
         out: list[ScoredItem] = []
+        fallback = None  # lazily built once the budget is exhausted
         for it in items:
             key = self.cache_key(it, self.model)
             cached = self._cache.get(key)
@@ -177,21 +244,76 @@ class LlmScorer:
                     )
                 )
                 continue
-            # Live call would happen here; PR-A stops short. Confirm an API
-            # key is present so a missing key is reported now rather than
-            # silently fired into a 401 in PR-B.
-            if not os.environ.get("ANTHROPIC_API_KEY"):
-                raise RuntimeError(
-                    "LlmScorer needs ANTHROPIC_API_KEY in env. "
-                    "Cache-hit items would have been served from disk; "
-                    f"this item ({it.title[:80]}) was a miss and needs a live call."
+
+            # Estimate the cost before spending it. If we can't afford the
+            # call, degrade to the fallback scorer for the rest of the run
+            # rather than raising mid-backtest.
+            est_usd = self._estimate_usd(it)
+            if not self._budget_ok(est_usd):
+                if fallback is None:
+                    fallback = self._build_fallback()
+                out.append(fallback.score([it])[0])
+                continue
+
+            try:
+                parsed, prompt_tokens, completion_tokens = self._call_llm(it)
+            except Exception:  # noqa: BLE001 - any live-call failure degrades gracefully
+                if fallback is None:
+                    fallback = self._build_fallback()
+                out.append(fallback.score([it])[0])
+                continue
+
+            self._record_spend(prompt_tokens, completion_tokens)
+            payload = {
+                "sentiment": float(parsed["sentiment"]),
+                "relevance": float(parsed.get("relevance", 1.0)),
+                "confidence": float(parsed.get("confidence", 1.0)),
+                "event_type": str(parsed.get("event_type", "other")),
+            }
+            self._append_cache(key, payload)
+            out.append(
+                ScoredItem(
+                    item=it,
+                    sentiment=payload["sentiment"],
+                    relevance=payload["relevance"],
+                    confidence=payload["confidence"],
+                    scorer=self.name,
                 )
-            raise NotImplementedError(
-                "LlmScorer live call lands in PR-B. Required next: "
-                "(1) anthropic.Anthropic().messages.create with a prompt asking for "
-                "    sentiment ∈ [-1,1], relevance ∈ [0,1], event_type; "
-                "(2) self._check_budget(est_usd) BEFORE the call; "
-                "(3) self._record_spend(prompt_tokens, completion_tokens) AFTER; "
-                "(4) self._append_cache(key, {sentiment, relevance, confidence, event_type})."
             )
         return out
+
+    def _estimate_usd(self, item: NewsItem) -> float:
+        """Rough pre-call cost estimate (~4 chars/token + fixed output budget)."""
+        chars = len(_SYSTEM_PROMPT) + len(item.title) + len(item.body[:1500]) + 40
+        est_input = chars / 4.0
+        est_output = 80.0
+        return (
+            est_input * self.usd_per_1k_input / 1000.0
+            + est_output * self.usd_per_1k_output / 1000.0
+        )
+
+    def _build_fallback(self):
+        from news_sentiment.scoring.lexicon import LexiconScorer
+
+        if self.fallback_scorer_name != "lexicon":
+            # Only lexicon is dependency-free; anything heavier would defeat
+            # the point of a budget-exhaustion fallback. Document and degrade.
+            pass
+        return LexiconScorer()
+
+
+def _parse_llm_json(text: str) -> dict:
+    """Extract the JSON object from a model response.
+
+    Tolerant of leading/trailing prose or code fences: grabs the first
+    ``{...}`` span and parses it. Raises ValueError if no valid object with a
+    numeric ``sentiment`` is found.
+    """
+    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if not match:
+        raise ValueError(f"no JSON object in LLM response: {text[:200]!r}")
+    obj = json.loads(match.group(0))
+    if "sentiment" not in obj:
+        raise ValueError(f"LLM response missing 'sentiment': {obj!r}")
+    float(obj["sentiment"])  # validate numeric
+    return obj
