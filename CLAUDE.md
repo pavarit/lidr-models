@@ -281,6 +281,16 @@ Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-mod
 
 ## Recent Changes
 
+### 2026-05-28 — CLAUDE.md maintenance: fold oldest 5 entries + restore missing Task 1 header (docs only)
+
+Maintenance pass acting on the file's own Maintenance Instructions. Two clear issues addressed:
+
+**(1) Recent Changes exceeded the ≤10-entry rule.** Count had grown to 11 with a 12th about to land (this entry). Folded the oldest 5 entries (Drift-fix Batch 1 of 6, Drift-fix Batch 6 of 6 / README split, Five lidr signals + PR-evidence convention, Signals explainer doc, Dup-date fix) into a single new sub-section in Archived Summary: "Six-signal TA model build-out + CLAUDE.md drift-fix arc (2026-05-26 → 2026-05-27)". Decisions and rationale preserved (PR-evidence cleanup mechanics, per-signal docs template, ACCURACY_CASES 5-tuple schema, dup-date Gotcha caveat, rtol=1e-8 tolerance rationale); narratives compressed roughly 5× by dropping the per-PR commentary and step-by-step diagnostics that have since been absorbed into Conventions / Gotchas / per-signal source files.
+
+**(2) Task 1 monorepo-restructure entry was unheadered.** The "Mechanical, no-behavior-change restructure that executes the plan from the 2026-05-27 planning session..." paragraph (the PR #23 entry) had lost its `### YYYY-MM-DD — title` header and sat orphaned between the 2026-05-28 Task 2 PR-A entry and the 2026-05-27 Planning entry. Added `### 2026-05-27 — Task 1: monorepo restructure into lidr_core / ta_ensemble / news_sentiment + schema v2 (PR #23)`, matching the file's header style.
+
+Deferred from this pass: (a) verify whether "20 new tests added; full suite is now 44" in the PR-A entry is the pytest-collected count or stale (current grep shows 27 `def test_` definitions, plausibly 44 once parametrized — low-stakes, needs `pytest --collect-only` in a configured env to confirm); (b) when revised PR-B lands, the Stack section's `EDGAR, GDELT, Tiingo all go through it` line will need the Tiingo deletion reflected — worth flagging in the PR-B kickoff prompt next time that doc is touched.
+
 ### 2026-05-28 — Plan revision: rewire PR-B around validated data sources (docs only, no code)
 
 Planning-only session in Cowork *after* PR-A merged, driven by two findings during credential setup that contradicted the original plan's assumptions: **(1) Reddit is effectively blocked** — Reddit's Responsible Builder Policy (verified directly at support.reddithelp.com/.../42728983564564) requires explicit moderation or accredited-academic justification for any Data API access; personal research collection no longer qualifies. **(2) Tiingo is $30/mo with only 3 months of news history at that tier** (verified from `tiingo.com/about/pricing`) — the original `~$10/mo + ~10yr history` thesis turned out wrong on both numbers; the 15-yr archive is sales-quoted enterprise. Also re-verified: **pytrends was archived 2025-04-17** so Google Trends as a free adapter is dead too.
@@ -313,7 +323,7 @@ Filled in the `news_sentiment` package shell from Task 1 with the structural pie
 
 **Plan doc stays alive.** `docs/plans/task-2-news-sentiment-model.md` is not deleted in this PR — Task 2's DoD ("delete the plan once the checkpoint merges") refers to PR-C. The CLAUDE.md Active Task section now carries the durable framing (the three-PR slice + what each PR ships); the plan doc keeps the per-phase build order.
 
-
+### 2026-05-27 — Task 1: monorepo restructure into lidr_core / ta_ensemble / news_sentiment + schema v2 (PR #23)
 
 Mechanical, no-behavior-change restructure that executes the plan from the 2026-05-27 planning session. `src/lidr_ml/` is gone; the code now lives in three packages under `packages/`:
 
@@ -414,82 +424,21 @@ In probability space the two models are essentially **equally non-skilled** — 
 - **Two charts beat one when the data spans years.** The full-window log chart compresses recent behavior into pixels; a 2024-onwards linear zoom (`docs/_pr_evidence/six_signal_baseline/chart_recent.png` at the time of merge, then removed in cleanup) is where the actual recent behavior is legible.
 - **Aborted bug worth flagging.** The verify script's first version had `prices["Close"]` (capital C). The yfinance loader normalizes columns to lowercase (`loaders.py:77`); the script's fallback `prices.iloc[:, 0]` silently returned the `open` column, producing an equity curve that ended at ~0.6× when results_log said 2.47×. Caught by sanity-checking the chart against the logged final equity. Lesson: chart-vs-log cross-check is a fast first-pass test for any one-off verification script that re-derives metrics.
 
-### 2026-05-27 — Fix duplicate-boundary-date bug in expanding-window backtest
-
-Caught while diagnosing the six-signal checkpoint: `backtest/engine.py::expanding_window_backtest` had `test_mask = (idx >= test_start) & (idx <= test_end)` and set `train_end = test_end` at the bottom of the loop. So the boundary date between split N and split N+1 (the actual idx date equal to `test_end_N == test_start_{N+1}`) was predicted in **both** splits' output slices. Visible in the committed prediction JSONs as duplicate dates at ~annual cadence — baseline_v1 had 12 dups out of 3,914, baseline_six had 11 out of 3,862 (~0.3%).
-
-**Fix.** Right endpoint of the test slice is now exclusive except on the final split (so the last data point still gets predicted). New regression tests in `tests/test_backtest_engine.py`: `test_predictions_index_is_unique` and `test_consecutive_splits_do_not_overlap`. Both fail against the pre-fix engine — verified by stashing the fix and re-running. Engine also now raises `AssertionError` if `pd.concat(preds)` ends up with a non-unique index, so the bug can't silently reappear.
-
-**Caveat noted in Gotchas.** All `artifacts/results_log.csv` rows from before this commit are very slightly off (accuracy, log_loss, skill_score, CAGR, Sharpe, n_oos all touched by the ~0.3% double-counted days). Didn't re-run the headline configs in this PR — the effect is below the noise floor for any conclusion drawn from those rows so far, and re-running requires yfinance. Future cross-row comparisons that straddle 2026-05-27 should be aware of this.
-
-### 2026-05-27 — Signals explainer doc (PR #13)
-
-Shipped a standalone first-time-reader explainer for the six implemented signals at [`docs/signals.md`](docs/signals.md), with per-signal charts in `docs/signals/`. Closes the gap that the in-code docstrings explained *how* each signal is computed but nothing told a casual reader *why it exists* or *how to read it*. README's "What's in the box" line — which had drifted to "One ported signal: SMA crossover" — also updated to reflect all six and link the new doc.
-
-**Per-signal template** (apply this when adding a future signal — keeps the doc internally consistent): *What it watches* (plain English) → *What the number means* (directional reading: high=BUY or high=SELL, with the trend-following / mean-reversion / conviction family called out) → *How it's calculated* (math table) → *Chart on SPY* → *What you'd have seen in recent history* (3–4 named events) → *When this signal works well, and when it doesn't* (two concrete failure modes) → *Parameters used here* (and *why* — convention vs. real justification).
-
-**Format choices worth remembering.**
-- **One combined markdown file**, not per-signal files. Lets a reader compare signals side-by-side and Ctrl-F across all of them; a TOC at the top handles navigation. README would have bloated past usability if these landed there instead.
-- **Chart-generation pattern**: write a throwaway top-level `_gen_signal_docs_charts.py` that calls each signal on the cached `data/raw/SPY_*.pkl`, writes PNGs into `docs/signals/`, then delete the script. Commit the outputs, not the generator. Same spirit as the PR-evidence pattern from PRs #5-#10 — review/regeneration artifacts don't live in `main`.
-- **Charts use the full 2005–2026 history on a log-scale price panel**, so 2008 GFC, 2020 COVID, 2022 bear, and 2025 tariff plunge are all simultaneously visible. Use HTML `<img>` tags with `width="100%"` (not bare `![]()`) so charts embed inline in every markdown renderer, not just GitHub.
-- **Trend-following vs mean-reversion vs conviction framing** lives in the intro and is repeated per-signal. A first-time reader's biggest landmine is assuming "high feature value = bullish" universally — false for RSI and Bollinger, undefined for volume. The grouping table at the top neutralises that misconception before they hit any signal section.
-
-**Cross-signal April 2025 callout.** The doc's closing section reuses the April 2025 plunge as a sanity check: five oscillator signals all flagged the same week as their most extreme reading; SMA crossover (a long-window trend indicator) didn't register the move for another five weeks. The contrast is intuition for why a model benefits from multiple signals at all. Computed signal readings on the plunge day (April 4/7/8, 2025) are quoted from a one-off run of the chart-generator script and are not stored anywhere in the repo — if the doc is ever updated, recompute rather than trusting the embedded numbers.
-
-### 2026-05-27 — Five lidr signals ported + PR-evidence convention (Next Up #3 done)
-
-Shipped all five remaining signal ports in PRs #5 (RSI), #7 (MACD), #8 (Bollinger), #9 (breakout), #10 (volume). Each one lands the standard three things — registry entry, `SIGNAL_CASES` row, `ACCURACY_CASES` entry — plus a fourth: review-time **verification evidence** committed to the branch and removed in a cleanup commit before squash-merge. This is now an explicit convention for any outcome-changing PR (see Conventions). The Python pipeline now exposes six features (`sma_crossover` + the five new ones).
-
-**The five signals.** All match lidr's TS implementation when run on SPY 2023–2026 (783–1,086 days each, depending on warmup). Features emitted are the raw continuous quantities (not the TS's discrete BUY/SELL action or clipped confidence) so the model can learn its own thresholds:
-
-| Signal | Feature emitted | Parity vs lidr TS |
-|---|---|---|
-| `rsi` (period=14) | Wilder-smoothed RSI value, 0–100 | exact bit-match (0 over 820 dates) |
-| `macd` (12/26/9) | `(macd_line − signal_line) / slow_ema` (normalized histogram) | exact bit-match (0 over 795 dates) |
-| `bollinger` (period=20) | `(close − sma_N) / std_N` z-score | 1.5e-11 over 815 dates (streaming vs direct std) |
-| `breakout` (period=252) | `(close − low_N) / (high_N − low_N)` position in 52-week range | exact bit-match (0 over 1,086 dates) |
-| `volume` (period=50) | `volume / volume.rolling(N).mean()` ratio | exact bit-match (0 over 785 dates) |
-
-**Cross-signal validation: April 2025 SPY plunge agreed on by all five signals.** A useful side-effect of running all five against the same SPY series: each independently flagged early April 2025 as the most extreme bearish event in the 2023–2026 window. RSI = 21.59 (deepest oversold), Bollinger z = −3.61σ (deepest stretched-down), MACD histogram = −6.36 (deepest bearish momentum-of-momentum), breakout feature ≈ 0.07 (deepest dip toward the 52-week low), volume ratio = 3.82× on 256.6M shares (highest-conviction selling day in 3+ years). Five independent measurements agreeing on the same day is a strong correctness signal for the port effort as a whole.
-
-**PR-evidence pattern formalized.** Each port followed the same review-time flow: `scripts/verify_<signal>.py` runs the Python signal **and** a literal JS transcription of lidr's TS on the same SPY closes, computes a parity number, renders a chart, writes `docs/_pr_evidence/<signal>/{chart.png, evidence.md}`. The chart is embedded in the PR description via `raw.githubusercontent.com/<owner>/<repo>/<commit-sha>/...` pinned to a specific SHA. A final cleanup commit removes the script + evidence before squash-merge — git's squash collapses the add+delete pair, so `main` stays free of review artifacts while the PR comment's image URL keeps working (commit-SHA persistence outlasts branch deletion). PR description top section is `## Summary` (no "for reviewers" suffix) and includes a plain-English explanation of what the signal is *before* the technical sections, so a non-technical reviewer can approve the output without code expertise.
-
-**Accuracy-test schema extended (PR #5).** The `ACCURACY_CASES` table now uses a 5-tuple `(name, params, reference_fn, prices_factory, spot_checks)` — adds a per-case `prices_factory` callable so each signal can pick the price fixture that makes its spot checks hand-derivable. Examples: RSI uses a `zigzag_prices` fixture (deltas alternating +2/−1, yields clean 200/3 and 3000/43 rationals at seed and first-recursion step); MACD uses `constant_prices` (every EMA = 100, normalized feature = 0 post-warmup, exercises the warmup boundary); Bollinger reuses `arithmetic_prices` (z-score is constant 19/√133 across all valid indices); breakout uses a new `step_prices` fixture engineered to land at positions 0.0, 0.5, 1.0 at three specific indices; volume uses `volume_spike_prices` (single spike yields 20/11, 10/11, 1.0 ratios).
-
-**Test-suite tolerance loosened, `rtol=1e-12` → `rtol=1e-8` (PR #8).** RSI and MACD pass at exact bit-match because they're recursive (one float op per step) and the loop-based numpy reference computes in the same order as the signal. Rolling-window signals don't: pandas' `rolling(N).std()` uses a streaming Welford-style accumulator that disagrees with naive `numpy.std`-per-window at ~1e-11 even though both are correct population std. The new tolerance is still ~1e5 tighter than any real-bug threshold (real bugs show 1e-3 or larger).
-
-**Spawned-task follow-up shipped in PR #6 (parallel session).** Noticed during PR #5 that the `dev_synthetic` smoke test was appending a row to the tracked `artifacts/results_log.csv` on every test run (2 rows per local pytest, plus 2 per CI run). PR #6 added an `output.results_log` config flag (default `true`; `dev_synthetic.yaml` sets it `false`) plus an assertion in `tests/test_pipeline_smoke.py` that the log file size doesn't grow during the smoke test.
-
-Test count went from 7 → 22 across this session (3 added per signal × 5 signals). All passing; lint clean across all PRs.
-
-### 2026-05-26 — Restructure: README is the public face, CLAUDE.md is Claude-facing (Batch 6 of 6)
-
-Final batch in the drift-fix series. Public-facing material now lives in README; CLAUDE.md is leaner and Claude-focused.
-
-- **README** gained an **Architecture** section with an ASCII pipeline diagram (configs → pipeline orchestrator → data/signals/models/backtest → eval → three output artifacts), a one-paragraph **Stack** description, a sentence describing what the HTML report contains, and a real **Project layout** block (no longer just "see CLAUDE.md").
-- **CLAUDE.md** "Commands" section trimmed to a one-liner pointer at README's Quick Start + CLI sections — the canonical home for "how to run it" is now README. Everything else (Project Goal, Stack, How the pipeline works, Folder map, Conventions, Key Decisions, Gotchas, Next Up, Active Task) stays as the deep-dive reference Claude needs while working on the code.
-- **Screenshot deferred.** A PNG of a rendered report would round out the README but requires actually rendering and capturing one — out of band for this session. The architecture diagram + one-paragraph description of report contents covers most of the orientation need until a screenshot is added (one-line PR when convenient).
-
-That closes a 6-batch arc driven by a drift report (read README, CLAUDE.md, and the codebase; produce findings in three buckets — documented-but-false / true-but-undocumented / ambiguous; then implement). Net effect across the six commits: every claim in CLAUDE.md now matches code; every public-facing contract (CLI, YAML schema, JSON artifact, results_log columns, license, contributing rules) is documented in README/CONTRIBUTING; the SPY baseline number traces to a real CSV row; and README is self-sufficient as the entry point.
-
-### 2026-05-26 — Drift-fix pass (Batch 1 of 6)
-
-Drift audit against the code surfaced several stale facts in CLAUDE.md and one dead config field. Fixes in this commit, no behavior change:
-
-- **CLAUDE.md Conventions**: protocol names corrected — `Signal` → `SignalFn` (real name at `signals/base.py:19`); Model protocol now lists all three methods (`fit`, `predict_proba`, `predict`) with correct `predict_proba -> np.ndarray` return type, not a DataFrame; signal test table is `SIGNAL_CASES`, not `SIGNALS`.
-- **Pipeline walkthrough step 7 + folder map for `metrics.py`**: dropped the phantom "hit rate" function; replaced with the actual exports (`classification_metrics`, `strategy_metrics`, `by_year`, `performance_by_year`) and noted that the equity curve itself is built in `backtest/engine.py::add_strategy_returns`, not `metrics.py`.
-- **Project Goal**: backtest range corrected from "pre-2008 to today" to "2005 to today" (matches `configs/baseline.yaml` `start_date: 2005-01-01`).
-- **Gotchas**: dropped the two Cowork-specific bullets (cloud-review truncating CLAUDE.md, and Cowork sandbox stale-mount) — those are environment-specific and unhelpful to contributors not on Anthropic's cloud dev stack.
-- **Next Up**: rewrote #8 (artifact JSON schema is already implemented at `schema_version: 1`; remaining work is "evolve as lidr's API needs firm up"). Promoted two previously-buried items to standalone roadmap entries: **calibrate `predict_proba` via Platt/isotonic** (was a parenthetical under #7), and **migrate binary target to 3-class BUY/HOLD/SELL** (was an offhand line in the pipeline walkthrough only). Both stay edge-gated. Renumbered downstream items.
-- **Configs**: removed dead `output.report_html: true` field from both YAMLs — `pipeline.py` always writes the HTML report unconditionally and never read this flag. Kept `output.predictions_json` which is honored.
-- **`strategy_metrics` empty-path**: return dict now includes `final_equity: 0.0` so callers don't need to branch on shape (the non-empty path already returned it).
-- **README**: "synthetic-data fallback" → "synthetic-data alternative" — `source: synthetic` is an explicit config switch, not an automatic fallback when yfinance fails.
-
-This is the first of six batches mapped out from a full drift report. Remaining: LICENSE + CONTRIBUTING + badges; README YAML/JSON schema reference; smaller operational notes (yfinance auto-adjust, cache invalidation); re-run SPY baseline so README numbers trace to `results_log.csv`; README ↔ CLAUDE.md restructure with architecture diagram + report screenshot.
-
 ## Archived Summary
 
 Older entries folded down per the Maintenance Instructions rule (Recent Changes exceeds 10 → fold oldest 5). Decisions and rationale preserved; narratives compressed. Sources: PRs and full entries in git history before commit `<this PR>`.
+
+### Six-signal TA model build-out + CLAUDE.md drift-fix arc (2026-05-26 → 2026-05-27)
+
+**Drift-fix Batch 1 of 6 (2026-05-26).** Drift audit between CLAUDE.md and code fixed several stale facts: protocol name `Signal` → `SignalFn`; Model protocol's three methods (`fit` / `predict_proba` → `np.ndarray` / `predict`); signal test table `SIGNALS` → `SIGNAL_CASES`; phantom `hit rate` removed from metrics.py walkthrough; backtest range "pre-2008" → "2005" to match `baseline.yaml`; Cowork-specific Gotchas dropped; Next Up #8 rewritten around already-implemented schema; calibration + 3-class items promoted to standalone roadmap entries; dead `output.report_html` field removed from configs; `strategy_metrics` empty-path return shape made consistent.
+
+**Drift-fix Batch 6 of 6 — README as public face / CLAUDE.md as Claude-facing (2026-05-26).** Final batch of the drift-fix arc. README gained an Architecture section (ASCII pipeline diagram), Stack paragraph, real Project layout block, and a description of the HTML report. CLAUDE.md Commands trimmed to a one-line pointer at README's Quick Start + CLI sections. Net effect across the six commits: every CLAUDE.md claim matches code; every public contract (CLI, YAML schema, JSON artifact, results_log columns, license, contributing rules) documented in README/CONTRIBUTING; SPY baseline numbers in README trace to a real `results_log.csv` row.
+
+**Five lidr signals ported + PR-evidence convention established (2026-05-27, PRs #5/#7/#8/#9/#10).** Shipped RSI, MACD, Bollinger, breakout, volume. Pipeline now exposes six features (sma_crossover + the five new ones). Each port matched lidr's TS implementation: RSI/MACD/breakout/volume exact bit-match; Bollinger 1.5e-11 (pandas Welford-style rolling std vs naive std). Features emitted are raw continuous quantities (not the TS's discrete BUY/SELL), so the model learns its own thresholds. Cross-signal validation: all five flagged early April 2025 SPY plunge as the most extreme bearish event in the 2023–2026 window — five independent measurements agreeing is strong correctness signal. **PR-evidence convention formalized** (now in Conventions): `scripts/verify_<thing>.py` → `docs/_pr_evidence/<thing>/{chart.png, evidence.md}`, embedded chart pinned to full-40-char commit SHA via `raw.githubusercontent.com`, removed in cleanup commit so `main` stays free of review artifacts while PR-comment chart URLs survive branch deletion. `ACCURACY_CASES` schema extended to 5-tuple with per-case `prices_factory` so each signal picks the fixture that makes hand-derivable spot checks possible. Tolerance loosened `rtol=1e-12` → `rtol=1e-8` to accommodate pandas' streaming rolling std (still ~1e5 tighter than any real-bug threshold). Spawned-task PR #6 added `output.results_log` config flag (default true; dev_synthetic sets false) + smoke-test assertion that the file size doesn't grow — stops smoke runs from polluting the tracked CSV. Test count 7 → 22.
+
+**Signals explainer doc (2026-05-27, PR #13).** Shipped [`docs/signals.md`](docs/signals.md) — standalone first-time-reader explainer for all six signals with per-signal SPY charts in `docs/signals/`. Closes the gap that in-code docstrings explained *how* but never *why a signal exists* or *how to read it*. **Per-signal template** (apply when adding future signals): what it watches → what the number means (trend-following / mean-reversion / conviction family) → math table → SPY chart → recent history (3–4 named events) → failure modes → parameters used + why. Format choices kept: one combined file (not per-signal); throwaway top-level chart-generator script that gets deleted after committing PNG outputs (same spirit as the PR-evidence cleanup); full 2005–2026 history on log-scale so 2008/2020/2022/April-2025 all simultaneously visible; HTML `<img>` tags with `width="100%"` for cross-renderer compatibility.
+
+**Dup-date fix in expanding-window backtest (2026-05-27, PR #16).** Caught while diagnosing the six-signal checkpoint: `expanding_window_backtest` had inclusive right endpoint on the test slice plus `train_end = test_end`, so the boundary date between split N and N+1 was predicted in **both** splits' output (~0.3% of rows; 11–12 dups per ~3,900-row config). Fix: right endpoint exclusive except on the final split. New regression tests `test_predictions_index_is_unique` + `test_consecutive_splits_do_not_overlap` (both fail against pre-fix engine); engine now also raises if `pd.concat(preds)` yields non-unique index, so the bug can't silently reappear. Pre-fix `results_log.csv` rows are very slightly off — documented in Gotchas; cross-row comparisons that straddle 2026-05-27 should be aware.
 
 ### Repo hygiene + workflow setup (2026-05-22 → 2026-05-26)
 
