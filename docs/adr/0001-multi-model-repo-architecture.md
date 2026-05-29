@@ -117,7 +117,7 @@ These are explicit requirements, not nice-to-haves. Each maps to a structural ch
 
 | Anticipated change | Structural answer |
 |---|---|
-| **Data sources will be added / swapped** | A `DataSource` protocol in `lidr_core/protocols`; each source (Tiingo, EDGAR, GDELT, Reddit, Google Trends) is a pluggable adapter under a model's `datasources/`. Configs select which sources are active. Adding a source = one new adapter file + one config line; re-training is a config change, not a code change. |
+| **Data sources will be added / swapped** | A `DataSource` protocol in `lidr_core/protocols`; each source (e.g. EDGAR, GDELT, Finnhub, Apewisdom, EODHD) is a pluggable adapter under a model's `datasources/`. Configs select which sources are active. Adding a source = one new adapter file + one config line; re-training is a config change, not a code change. The 2026-05-28 data-source revision (see `docs/research/data-sources.md`) is the protocol's first real stress test — swapping Reddit / Tiingo / pytrends out for Finnhub / Apewisdom / EODHD is a config + adapter swap, not a model rewrite. |
 | **Models will iterate many times** | Every backtest run already appends a row to `results_log.csv` with a `run_id`. Extend it with `model_id` + `model_version` and surface a cross-model **leaderboard** so "did this version beat the last one, and does it beat the other model?" is answerable without opening reports. Builds directly on what `lidr-ml` already has. |
 | **Features and the model will change** | Keep the existing pluggable `Signal` / `Model` protocols; add a parallel `Feature` registry for the news model. A model is assembled from a config that names its sources, features, scorer, and learner — so swapping any layer is a config edit. |
 
