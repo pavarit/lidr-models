@@ -12,7 +12,7 @@ Three packages under `packages/`:
 - **`ta_ensemble`** — the six TA signals + pipeline. Today's only complete model.
 - **`news_sentiment`** — in development (Task 2 PR-A scaffolding: free data adapters + collector + lexicon scorer + three features + offline dev pipeline). Real backtest and news-vs-TA comparison land in PR-B/C.
 
-See `CLAUDE.md` for the full architecture, design decisions, and roadmap, and [`docs/adr/0001-multi-model-repo-architecture.md`](docs/adr/0001-multi-model-repo-architecture.md) for the rationale behind the monorepo shape.
+**New here?** Start with this README (run instructions, the [pipeline walkthrough](#how-the-pipeline-works), and [current status](#current-status-at-a-glance)), then the [`docs/` index](docs/README.md) for the ADR, the signals explainer, and research notes. [`CLAUDE.md`](CLAUDE.md) is the deep, AI-facing playbook (full history, conventions, gotchas, roadmap) — the most complete doc, and the longest.
 
 ## Current status at a glance
 
@@ -79,6 +79,20 @@ One pipeline per model, top-to-bottom — orchestrated from each model's `pipeli
 The HTML report contains: a config summary, top-line classification metrics with the no-skill floor (`base_logloss`) beside log loss, the Strategy-vs-Buy&Hold comparison table, the per-year classification breakdown, the per-year strategy-vs-benchmark returns with excess column, and the equity-curve chart. Wins are green/red-highlighted against the benchmark.
 
 **Example report**: [view rendered](https://htmlpreview.github.io/?https://github.com/pavarit/lidr-models/blob/main/docs/sample-report/report.html) (via `htmlpreview.github.io`) or [view raw HTML](docs/sample-report/report.html). Same baseline run cited in the SPY baseline status below (`baseline_v1-20260526-124439`).
+
+## How the pipeline works
+
+The [Architecture](#architecture) diagram above shows the data flow; this is the per-step detail, reading top-down. Everything for the TA model is wired together by [`packages/ta_ensemble/src/ta_ensemble/pipeline.py::run_pipeline`](packages/ta_ensemble/src/ta_ensemble/pipeline.py).
+
+1. **Config** (`packages/ta_ensemble/configs/*.yaml`) — declares what to run: tickers, date range, data source, which signals, which model, backtest method, transaction costs. Also carries `model_id` + `model_version` so produced artifacts identify their model family. See [Config schema](#config-schema) and [`packages/ta_ensemble/configs/`](packages/ta_ensemble/configs/).
+2. **Data loader** (`packages/lidr_core/src/lidr_core/data/loaders.py`) — pulls OHLCV from yfinance (or generates synthetic series for offline dev). yfinance is called with `auto_adjust=True`, so close prices are total-return-adjusted (dividends + splits folded in); a "200-day high" is a 200-day high of the adjusted series, not the raw close. Cached by `(ticker, start, end)` in `data/raw/<ticker>_<start>_<end>.pkl`; the cache never expires, so `rm data/raw/*.pkl` to force a refresh.
+3. **Signals** (`packages/ta_ensemble/src/ta_ensemble/signals/`) — each signal is a pure function that takes a DataFrame of prices and returns a Series of feature values aligned to the price index. Every signal must be **lookahead-safe** (only uses data up to time *t* to compute the value at time *t*), enforced by `packages/ta_ensemble/tests/test_no_lookahead.py`.
+4. **Target** (computed inline in `run_pipeline`) — for now, binary: was the *N*-day forward return positive? Will become 3-class (BUY/HOLD/SELL) once a model has edge.
+5. **Backtest engine** (`packages/lidr_core/src/lidr_core/backtest/engine.py`) — expanding-window walk-forward. For each split: fit the model on the train slice, predict on the test slice, store predictions. Never trains on data after the test period.
+6. **Model** (`packages/lidr_core/src/lidr_core/models/`) — pluggable; today logistic regression and LightGBM (both generic, hence in `lidr_core`). Neither beats the no-skill baseline on the six-signal feature set yet (see [Current status](#current-status-at-a-glance)).
+7. **Eval + report** (`packages/lidr_core/src/lidr_core/eval/`) — classification metrics (`accuracy`, `base_rate`, `pred_rate`, `log_loss`, `base_logloss`, `n_obs`), strategy metrics (`cagr`, `sharpe`, `max_drawdown`, `final_equity`), and per-year breakdowns. `base_rate` / `pred_rate` sit beside `accuracy` so a 0.55 accuracy can't hide a 0.61 base rate. The equity curve is marked to market with **1-day-forward returns**, not the N-day classification target (compounding the N-day return daily would inflate equity ~N×). HTML report written to `reports/<config>-<timestamp>/`.
+8. **Cross-run results log** (`packages/lidr_core/src/lidr_core/eval/results_log.py`) — `append_run()` adds one row per backtest to `artifacts/results_log.csv` (skill score, full-OOS + per-period log loss with base-rate floors, strategy vs benchmark CAGR/Sharpe/max-drawdown, excess) so "did this change help?" is answerable without opening every report. Opt out per-config with `output.results_log: false` (default true).
+9. **Artifact contract + leaderboard** (`packages/lidr_core/src/lidr_core/contract/`, `.../eval/leaderboard.py`) — `build_artifact` assembles the `schema_version: 2` payload and `write_artifact` validates it against `artifact.schema.json` before writing under `artifacts/predictions/<model_id>/`; `write_manifest` emits `artifacts/manifest.json` so lidr can discover every model + its headline OOS skill. See [Outputs](#outputs).
 
 ## What's in the box right now
 
