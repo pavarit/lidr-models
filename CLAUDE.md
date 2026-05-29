@@ -2,7 +2,7 @@
 
 This file orients any AI assistant (Claude Code, Claude Cowork, etc.) joining this project. Read it before doing anything else. Then keep it current — see "Maintenance Instructions" at the bottom.
 
-**Hosting repo**: https://github.com/pavarit/lidr-models (renamed from `lidr-ml` on 2026-05-27 after Task 1 merged; the old URL still redirects).
+**Hosting repo**: https://github.com/pavarit/lidr-models
 
 ## Project Goal
 
@@ -181,7 +181,7 @@ Makefile                                make install / backtest / test / lint / 
   1. Register in `ta_ensemble/signals/registry.py`.
   2. Add to the `SIGNAL_CASES` table in `packages/ta_ensemble/tests/test_no_lookahead.py` (the lookahead test is non-negotiable).
   3. Add an `ACCURACY_CASES` entry in `packages/ta_ensemble/tests/test_signal_accuracy.py` — a 5-tuple `(name, params, reference_fn, prices_factory, spot_checks)`. The `reference_fn` should be a *structurally different* implementation of the same algorithm (e.g., loop-based numpy reference vs the signal's vectorized pandas path) so a shared bug between signal and reference is unlikely. The `prices_factory` returns the price fixture used for the layer-2 spot checks (typically chosen so the expected values are derivable by hand without running code; ≥2 spot checks required). The layer-1 element-wise tolerance is `rtol=1e-8`.
-- **Outcome-changing PRs need verification evidence in the PR description.** PRs that affect what the pipeline outputs (signal ports, model updates, scoring/calibration changes, JSON-artifact schema changes) need a `## Summary` section explaining the change in plain English plus an embedded chart and dated sanity-check table from real SPY data. For signal ports, also cite a max-absolute-difference number vs lidr's TS implementation. Refactors, doc-only changes, and infra/CI changes don't need this. **Mechanics:** `scripts/verify_<thing>.py` generates `docs/_pr_evidence/<thing>/chart.png` + `evidence.md`, committed to the branch then **removed in a final commit before squash-merge** so `main` stays free of review artifacts; the chart URL in the PR description pins to a commit SHA via `raw.githubusercontent.com` so it survives branch deletion. **Always get the full 40-char SHA from `git rev-parse <short>` and paste it verbatim — do not type SHA hex from memory or extend a short SHA by hand.** The raw URL needs an exact-match SHA or it returns 404; the first 7 chars looking right is not enough. PR #15 shipped with two broken chart URLs because the trailing 33 hex chars were typed from memory; caught only when the user clicked through. See PRs #5 / #7 / #8 / #9 / #10 (the five signal ports of 2026-05-27) for the template.
+- **Outcome-changing PRs need verification evidence in the PR description.** PRs that affect what the pipeline outputs (signal ports, model updates, scoring/calibration changes, JSON-artifact schema changes) need a `## Summary` section explaining the change in plain English plus an embedded chart and dated sanity-check table from real SPY data. For signal ports, also cite a max-absolute-difference number vs lidr's TS implementation. Refactors, doc-only changes, and infra/CI changes don't need this. **Mechanics:** `scripts/verify_<thing>.py` generates `docs/_pr_evidence/<thing>/chart.png` + `evidence.md`, committed to the branch then **removed in a final commit before squash-merge** so `main` stays free of review artifacts; the chart URL in the PR description pins to a commit SHA via `raw.githubusercontent.com` so it survives branch deletion. **Always get the full 40-char SHA from `git rev-parse <short>` and paste it verbatim** — the raw URL is exact-match or 404; never type SHA hex from memory or extend a short SHA by hand (see PR #15 in git history for the incident that motivated this rule). See PRs #5 / #7 / #8 / #9 / #10 for the template.
 - **Backtests use expanding-window walk-forward only.** Random k-fold leaks information across time and is rejected on sight.
 - **Transaction costs are modeled in every backtest.** Default 5 bps; configurable but never zero in a config that gets compared to buy-and-hold.
 - **Every report must show a benchmark.** Strategy metrics rendered beside buy-and-hold; log loss rendered beside `base_logloss` (the no-skill floor). New comparison columns get appended to the *right* of existing benchmark columns.
@@ -241,32 +241,7 @@ Cross-references to Next Up items use names, not numbers — see Maintenance Ins
 
 ### Step 1 — Horizon spike (active next)
 
-Run target-horizon sweep on the existing six-signal TA model to settle whether the 5d-sign target's noise floor is itself the bottleneck. If 20d helps meaningfully, design `news_v0.yaml` against the same horizon. Free, doesn't need creds.
-
-Concrete: clone `packages/ta_ensemble/configs/baseline_six_signals_unweighted.yaml` → variants at `target.horizon_days: 1, 5, 10, 20, 60`. Do the same for the LightGBM config. Run all, append rows to `results_log.csv`, plot **skill_score vs horizon** for both model classes + per-period strategy returns. PR with the chart + per-period table as evidence per the outcome-changing-PR convention.
-
-**Claude Code kickoff prompt (horizon spike):**
-
-```
-Read CLAUDE.md, then the Active Task → "Step 1 — Horizon spike" section.
-
-Execute the horizon spike (Next Up: target/feature reformulation, direction (a)).
-This is a free, no-credentials task that runs entirely on existing TA infrastructure.
-
-Steps:
-1. In a new branch, clone baseline_six_signals_unweighted.yaml and the LightGBM
-   config to variants with target.horizon_days in {1, 5, 10, 20, 60} — 10 configs total.
-2. Run each. Each run appends a row to artifacts/results_log.csv with the existing
-   per-period breakdown.
-3. Build the evidence chart: skill_score vs horizon for both model classes (10 points),
-   plus a per-period strategy returns table for the most interesting horizons.
-4. PR with the chart + table as PR-evidence per the outcome-changing-PR convention
-   (scripts/verify_*.py → docs/_pr_evidence/horizon_sweep/ → removed in cleanup commit).
-5. Document the finding in this Active Task section (which horizon won, by how much,
-   what it implies for news_v0.yaml). Do NOT start the revised PR-B.
-
-Follow protected-main PR workflow; CI green is required.
-```
+Full spec + Claude Code kickoff prompt in [`docs/plans/horizon-spike.md`](docs/plans/horizon-spike.md). Sweeps `target.horizon_days ∈ {1, 5, 10, 20, 60}` × `{logistic, LightGBM}` on the six-signal TA model → 10 rows in `results_log.csv` + skill_score-vs-horizon chart + per-period table per the outcome-changing-PR evidence convention. Free, no creds. The 5d-vs-20d target-noise question directly shapes `news_v0.yaml`'s `target.horizon_days` for PR-C. Plan doc self-deletes on merge per the disposable-plan-doc convention.
 
 ### Step 2 — Revised PR-B (after horizon spike merges)
 
@@ -280,6 +255,20 @@ Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-mod
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-28 — CLAUDE.md context-bleed trim, batch 1 of 3 (docs only)
+
+Follow-up to the same-day fold/header maintenance ([PR #28](https://github.com/pavarit/lidr-models/pull/28)). Targets per-task **context bleed** — content that loads into every Claude Code session but is only relevant to specific tasks. Four mechanical trims in this batch; structural changes (diagnostic-playbook extraction, folder-map condensation) intentionally deferred to their own sessions where the trade-offs get focused review.
+
+**1. Horizon-spike kickoff prompt moved to its own plan doc.** The Active Task → Step 1 section was carrying a ~20-line embedded prompt that's only useful when *starting* the horizon-spike branch. Moved to [`docs/plans/horizon-spike.md`](docs/plans/horizon-spike.md) mirroring how Task 2's PR-B kickoff lives in its plan doc. Plan doc self-deletes on merge per the disposable-plan-doc convention. CLAUDE.md now carries a one-paragraph framing + link, matching the shape of Step 2 and Step 3.
+
+**2. PR-evidence SHA anecdote compressed in Conventions.** The bullet about always using a 40-char SHA had a 3-sentence retelling of the PR #15 broken-URL incident. Rule + git-history pointer is enough; the incident detail rots and the link grep'es.
+
+**3. Session-wrap behavior bullet dropped from Maintenance Instructions.** It duplicated the global `~/.claude/CLAUDE.md` "Session-wrap behavior" section verbatim. Replaced with a one-line pointer so the rule still surfaces but lives in exactly one place (one-fact-one-place rule, applied at the inter-file level).
+
+**4. Hosting-repo rename detail trimmed.** The parenthetical `(renamed from lidr-ml on 2026-05-27 after Task 1 merged; the old URL still redirects)` was historical noise on every load. The redirect itself makes old refs work; the rename date is grep-able in git history if it ever matters. Dropped.
+
+**Next batches (separate sessions).** Batch 2: extract durable "diagnostic checks" and "workflow lessons" paragraphs from Recent Changes entries into a top-level Diagnostic Playbook section — judgment-heavy because the right home (new section / merge into Conventions / external doc) needs deliberate choice. Batch 3: folder map condensation — judgment-heavy because deciding whether per-file annotations move to module docstrings or just get deleted is a real trade-off between locality and bleed.
 
 ### 2026-05-28 — CLAUDE.md maintenance: fold oldest 5 entries + restore missing Task 1 header (docs only)
 
@@ -474,4 +463,4 @@ If you (a future AI assistant joining this project) make meaningful changes, als
 - **When a Next Up item ships, remove it (don't strike it through) and renumber the rest.** Document the completion in Recent Changes — that's the single source of truth for "what's been done." Keeping completed items in Next Up duplicates information and makes the section grow monotonically. Cross-references to Next Up items elsewhere in this file should use **names** ("see roadmap: LightGBM"), not numbers, so renumbering doesn't break references. Historical references in Recent Changes (e.g., "Next Up #3 done") are fine to leave as-is — they describe state at the time.
 - **Cross-link to lidr.** If a change here affects the integration with lidr (artifact format, signal parity, what the website should consume), update lidr's CLAUDE.md too in the same session.
 - **Archive when Recent Changes exceeds 10 entries.** Fold the oldest 5 into a `## Archived Summary` section at the bottom. Preserve decisions and rationale; compress narratives, not insights.
-- **Before declaring a session closed, ask the user if there's anything else.** After the last PR merges and the task list is clean, give a short 2–3 line session summary and explicitly ask "anything else before we wrap up?" Don't write a terminal-sounding summary that implicitly closes the conversation — users often surface important follow-up questions (test the conclusion harder, reframe a finding, spawn a follow-up PR) only *after* seeing the wrap-up. Cutting them off forces a new session to handle what could have been one more exchange. The closing question goes in the same message as the wrap-up; the form matters less than the *signal* that the conversation is still open.
+- **Session-wrap behavior** — see the "Session-wrap behavior" section in the global `~/.claude/CLAUDE.md`.
