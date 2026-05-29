@@ -30,7 +30,7 @@ HTTP-only — uses ``requests`` (a base dep), no optional extra.
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 
@@ -141,5 +141,8 @@ def _parse_eodhd_date(raw: object) -> datetime | None:
         except ValueError:
             return None
     if dt.tzinfo is not None:
-        dt = dt.astimezone(tz=None).replace(tzinfo=None)
+        # Convert to UTC (NOT local time — astimezone(tz=None) would shift by the
+        # runner's offset and break the UTC-naive point-in-time contract), then
+        # drop tzinfo so published_at is UTC-naive like every other adapter.
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
