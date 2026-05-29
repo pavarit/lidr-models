@@ -16,7 +16,7 @@ are always late to a single headline by construction.
 - Free data adapters: `synthetic`, `edgar`, `gdelt`, `reddit`, `google_trends`.
   Real implementations; heavy deps (`praw`, `pytrends`) are lazy-imported so
   the offline dev path works without them. `tiingo` is a stub that raises
-  `NotImplementedError` until PR-B.
+  `NotImplementedError`.
 - Collector with timestamped on-disk cache + dedup-by-content-hash so the data
   clock starts now (Reddit history can't be backfilled — every day of delay
   is lost training data).
@@ -27,9 +27,18 @@ are always late to a single headline by construction.
 - `configs/dev.yaml` runs the full pipeline on synthetic prices + synthetic
   items end-to-end (no internet, no keys).
 
+> **Data-source plan revised (2026-05-28) — read before extending the adapters.**
+> The adapters listed above are the shipped PR-A set. PR-B rewires the data
+> layer around a validated stack: `tiingo` is **deleted**, `reddit` +
+> `google_trends` become **permanent stubs** (Reddit's Responsible Builder
+> Policy blocks research collection; pytrends was archived 2025-04-17), and
+> `finnhub` / `apewisdom` / `eodhd` adapters are added. See
+> [`docs/research/data-sources.md`](../../docs/research/data-sources.md) and
+> CLAUDE.md → Active Task for the rationale.
+
 PR-A intentionally does **not** ship a real `news_v0.yaml` backtest or a
-news-vs-TA comparison. Those need Tiingo News + Anthropic + Reddit credentials
-and FinBERT installed; they land in PR-B and PR-C.
+news-vs-TA comparison. Those land in PR-B (data-source rewire + FinBERT/LLM
+scoring) and PR-C (real backtest + comparison).
 
 ## CLI
 
