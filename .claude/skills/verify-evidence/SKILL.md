@@ -60,6 +60,9 @@ changes which failure mode is most likely, so the list splits accordingly.
   before the numbers exist — doing so has contradicted the actual numbers more than once
   here. Produce the table, then write from it. When the result is surprising or contradicts a
   prior, dig: build in one "what would convince me this is wrong?" pass before declaring done.
+  The same discipline covers *operational* facts — article/row counts, commit SHAs, token
+  counts, $ spend, test totals — in any PR, comment, or commit: transcribe each from same-turn
+  tool output, never recall it from memory (CLAUDE.md Conventions → "Transcribe figures").
 
 ### If you're claiming the model is BETTER (has an edge / beats the benchmark)
 
@@ -147,6 +150,12 @@ approve without re-running anything. The procedure:
 - **Pin the embedded chart URL to the full 40-char SHA from `git rev-parse <short>`, pasted
   verbatim.** The `raw.githubusercontent.com` URL is exact-match or 404 — never type SHA hex
   from memory or hand-extend a short SHA. A PR once shipped with a 404'd chart for exactly this.
+- **Live-verification evidence uses the same mechanics as the chart.** API responses, LLM
+  smoke output, and spend logs that back a verification claim get committed under
+  `docs/_pr_evidence/<thing>/`, linked in the PR pinned to a full 40-char SHA, and removed in
+  the cleanup commit before squash-merge — exactly like the chart/table evidence above. A
+  "PASS" claim doesn't merge without that linked, openable artifact (see CLAUDE.md Conventions
+  → "Transcribe figures": PASS requires an inspectable artifact to already exist).
 
 ### The script scaffold
 
