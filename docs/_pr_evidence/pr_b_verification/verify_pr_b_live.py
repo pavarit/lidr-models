@@ -1,6 +1,13 @@
-"""Real PR-B live verification. Writes an inspectable log to _tmp_verify_log.txt.
-Prints only counts / timestamps / URLs / sentiment — never the API keys.
-Run with the three keys present in the process env."""
+"""PR-B live verification — produces an inspectable log. Prints no API keys.
+
+EODHD note: the API returns articles newest-first and its `to` bound is not
+strictly enforced server-side, so a single page (max_pages=1) over a window
+that ENDED in the past captures nothing (all of the newest page is after that
+end and gets filtered by published_at < end). For the timestamp-authenticity
+spot-check we therefore use a window whose end is just after now, which returns
+the most-recent real articles to inspect. Reaching deep historical months needs
+offset paging — a PR-C concern, flagged in the PR, not part of PR-B's DoD.
+"""
 from __future__ import annotations
 
 import os
@@ -40,9 +47,9 @@ try:
     if items:
         log(f"sorted ascending: {items == sorted(items, key=lambda i: i.published_at)}")
         log(f"all in window: {all(start <= i.published_at <= end for i in items)}")
-        log("first 3:")
+        log("first 3 (published_at | title):")
         for it in items[:3]:
-            log(f"  {it.published_at.isoformat()}  {it.title[:62]!r}")
+            log(f"  {it.published_at.isoformat()}  {it.title[:60]!r}")
 except Exception as e:  # noqa: BLE001
     log(f"FINNHUB ERROR: {type(e).__name__}: {e}")
 
@@ -50,8 +57,11 @@ except Exception as e:  # noqa: BLE001
 # ---------------- EODHD timestamp spot-check ----------------
 section("2. EODHD /api/news  TIMESTAMP SPOT-CHECK (1 request = 5 API calls)")
 log(f"EODHD_API_TOKEN present: {bool(os.environ.get('EODHD_API_TOKEN'))}")
+log("note: EODHD returns newest-first; end set to tomorrow so the newest page")
+log("      survives the published_at<end filter. These are recent real articles,")
+log("      NOT spanning months (deep history needs offset paging — a PR-C item).")
 try:
-    e_end = datetime.now() - timedelta(days=30)
+    e_end = datetime.now() + timedelta(days=1)
     e_start = e_end - timedelta(days=120)
     items = EodhdSource(limit=20, max_pages=1).fetch(
         "AAPL", e_start.strftime("%Y-%m-%d"), e_end.strftime("%Y-%m-%d")
@@ -61,11 +71,11 @@ try:
     if items:
         log(f"all in window: {all(e_start <= i.published_at < e_end for i in items)}")
         log(f"sorted ascending: {items == sorted(items, key=lambda i: i.published_at)}")
-        log(f"distinct timestamps among first 20: {len({i.published_at for i in items[:20]})}")
-        log("up to 20 articles  (published_at | url) — eyeball for backfill:")
-        for it in items[:20]:
-            log(f"  {it.published_at.isoformat()}  {it.url[:78]}")
-        log(f"sample eodhd_sentiment (metadata baseline): {items[0].meta.get('eodhd_sentiment')}")
+        log(f"distinct timestamps: {len({i.published_at for i in items})} of {len(items)}")
+        log("articles (published_at | url) — eyeball for backfill:")
+        for it in items:
+            log(f"  {it.published_at.isoformat()}  {it.url[:74]}")
+        log(f"sample eodhd_sentiment (metadata baseline only): {items[0].meta.get('eodhd_sentiment')}")
 except Exception as e:  # noqa: BLE001
     log(f"EODHD ERROR: {type(e).__name__}: {e}")
 
@@ -75,6 +85,8 @@ section("3. LIVE LLM smoke  (through the cost-control harness)")
 log(f"ANTHROPIC_API_KEY present: {bool(os.environ.get('ANTHROPIC_API_KEY'))}")
 try:
     spend = Path("_tmp_spend.csv")
+    if spend.exists():
+        spend.unlink()
     scorer = LlmScorer(model="claude-haiku-4-5", max_calls=2, max_usd=0.10,
                        spend_log_path=spend, run_id="pr_b_live_verify")
     pos = NewsItem(ticker="AAPL", published_at=datetime(2024, 1, 15, 12, 0, 0), source="verify",

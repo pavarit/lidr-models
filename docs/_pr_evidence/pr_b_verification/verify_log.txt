@@ -7,26 +7,54 @@ window: 2026-04-29 -> 2026-05-29
 items fetched: 214
 sorted ascending: True
 all in window: True
-first 3:
-  2026-05-23T13:52:00  'Why American Express Is Still a Top Buffett Stock After All Th'
-  2026-05-23T14:00:03  'GDP Alert: The United Kingdom Is Poorer Than Every Individual '
-  2026-05-23T14:51:58  'Apple Inc. (AAPL)’s Durable Growth Narrative Keeps Getting Str'
+first 3 (published_at | title):
+  2026-05-23T13:52:00  'Why American Express Is Still a Top Buffett Stock After All '
+  2026-05-23T14:00:03  'GDP Alert: The United Kingdom Is Poorer Than Every Individua'
+  2026-05-23T14:51:58  'Apple Inc. (AAPL)’s Durable Growth Narrative Keeps Getting S'
 
 ========================================================================
 2. EODHD /api/news  TIMESTAMP SPOT-CHECK (1 request = 5 API calls)
 ========================================================================
 EODHD_API_TOKEN present: True
-window: 2025-12-30 -> 2026-04-29
-items fetched: 0
+note: EODHD returns newest-first; end set to tomorrow so the newest page
+      survives the published_at<end filter. These are recent real articles,
+      NOT spanning months (deep history needs offset paging — a PR-C item).
+window: 2026-01-30 -> 2026-05-30
+items fetched: 20
+all in window: True
+sorted ascending: True
+distinct timestamps: 20 of 20
+articles (published_at | url) — eyeball for backfill:
+  2026-05-28T23:39:16  https://finance.yahoo.com/markets/stocks/articles/why-taiwan-semiconductor
+  2026-05-29T01:43:51  https://finance.yahoo.com/sectors/technology/articles/foxconn-immense-conf
+  2026-05-29T08:49:11  https://finance.yahoo.com/sectors/technology/articles/key-themes-watch-asi
+  2026-05-29T10:20:02  https://finance.yahoo.com/markets/stocks/articles/invesco-russell-1000-dyn
+  2026-05-29T10:49:58  https://finance.yahoo.com/markets/stocks/articles/jim-cramer-believes-noth
+  2026-05-29T11:23:00  https://finance.yahoo.com/m/9c1a9856-4c36-3693-87a1-8d4ccb76fb62/sell-in-m
+  2026-05-29T12:00:00  https://finance.yahoo.com/video/ai-spending-fervor-comparable-industrial-1
+  2026-05-29T12:08:25  https://finance.yahoo.com/m/4d4fb8e3-2a73-39ba-9f4f-da84a63951c0/stock-mar
+  2026-05-29T12:42:00  https://finance.yahoo.com/sectors/healthcare/articles/navigating-era-physi
+  2026-05-29T13:23:13  https://finance.yahoo.com/markets/stocks/articles/apple-house-modem-chips-
+  2026-05-29T14:17:31  https://finance.yahoo.com/markets/stocks/articles/hershey-bull-sees-world-
+  2026-05-29T14:22:19  https://finance.yahoo.com/sectors/technology/articles/tiktok-pushes-deeper
+  2026-05-29T15:44:38  https://finance.yahoo.com/markets/stocks/articles/3-dow-jones-stocks-consi
+  2026-05-29T16:00:03  https://finance.yahoo.com/markets/stocks/articles/apple-aapl-great-momentu
+  2026-05-29T16:15:00  https://finance.yahoo.com/m/9c1a9856-4c36-3693-87a1-8d4ccb76fb62/sell-in-m
+  2026-05-29T19:32:22  https://www.nasdaq.com/articles/noteworthy-friday-option-activity-elvn-aap
+  2026-05-29T20:46:00  https://finance.yahoo.com/m/ef9a1540-8c0f-3197-8de6-1c6d0b969f15/the-memor
+  2026-05-29T21:00:00  https://www.globenewswire.com/news-release/2026/05/29/3303828/0/en/Canbors
+  2026-05-29T21:10:06  https://finance.yahoo.com/markets/stocks/articles/apple-ai-shift-huawei-ch
+  2026-05-29T23:48:43  https://www.nasdaq.com/articles/stock-market-today-may-29-microsoft-rises-
+sample eodhd_sentiment (metadata baseline only): {'polarity': 0.994, 'neg': 0.039, 'neu': 0.787, 'pos': 0.174}
 
 ========================================================================
 3. LIVE LLM smoke  (through the cost-control harness)
 ========================================================================
 ANTHROPIC_API_KEY present: True
   BULLISH headline: scorer=llm sentiment=+0.850 relevance=0.99 confidence=0.95
-  BEARISH headline: scorer=llm sentiment=-0.720 relevance=0.95 confidence=0.88
+  BEARISH headline: scorer=llm sentiment=-0.750 relevance=0.95 confidence=0.92
   budget remaining: 0 calls, $0.0993
   spend log rows (incl header): 3
     ts,run_id,model,prompt_tokens,completion_tokens,est_usd
-    2026-05-30T03:55:01+00:00,pr_b_live_verify,claude-haiku-4-5,192,52,0.000362
-    2026-05-30T03:55:02+00:00,pr_b_live_verify,claude-haiku-4-5,198,52,0.000366
+    2026-05-30T04:04:51+00:00,pr_b_live_verify,claude-haiku-4-5,192,52,0.000362
+    2026-05-30T04:04:52+00:00,pr_b_live_verify,claude-haiku-4-5,198,52,0.000366
