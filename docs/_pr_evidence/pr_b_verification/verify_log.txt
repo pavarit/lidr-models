@@ -1,0 +1,32 @@
+
+========================================================================
+1. FINNHUB /company-news  (live, through the adapter)
+========================================================================
+FINNHUB_API_KEY present: True
+window: 2026-04-29 -> 2026-05-29
+items fetched: 214
+sorted ascending: True
+all in window: True
+first 3:
+  2026-05-23T13:52:00  'Why American Express Is Still a Top Buffett Stock After All Th'
+  2026-05-23T14:00:03  'GDP Alert: The United Kingdom Is Poorer Than Every Individual '
+  2026-05-23T14:51:58  'Apple Inc. (AAPL)’s Durable Growth Narrative Keeps Getting Str'
+
+========================================================================
+2. EODHD /api/news  TIMESTAMP SPOT-CHECK (1 request = 5 API calls)
+========================================================================
+EODHD_API_TOKEN present: True
+window: 2025-12-30 -> 2026-04-29
+items fetched: 0
+
+========================================================================
+3. LIVE LLM smoke  (through the cost-control harness)
+========================================================================
+ANTHROPIC_API_KEY present: True
+  BULLISH headline: scorer=llm sentiment=+0.850 relevance=0.99 confidence=0.95
+  BEARISH headline: scorer=llm sentiment=-0.720 relevance=0.95 confidence=0.88
+  budget remaining: 0 calls, $0.0993
+  spend log rows (incl header): 3
+    ts,run_id,model,prompt_tokens,completion_tokens,est_usd
+    2026-05-30T03:55:01+00:00,pr_b_live_verify,claude-haiku-4-5,192,52,0.000362
+    2026-05-30T03:55:02+00:00,pr_b_live_verify,claude-haiku-4-5,198,52,0.000366
