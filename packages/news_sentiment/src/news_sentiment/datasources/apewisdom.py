@@ -6,12 +6,22 @@ r/SPACs / 4chan-biz and exposes them through a simple ranking API.
 
 **Live-snapshot only.** The public API returns the *current* ranking (plus a
 24h-ago comparison), not a queryable history. So this adapter cannot serve a
-backtest window directly — instead it emits one synthetic ``NewsItem`` per
-ticker for the *current* day, carrying the mention count + sentiment in
-``meta``. The collector forward-collects these day by day, building our own
-historical store over time. That is why Apewisdom features are excluded from
-``news_v0.yaml``'s first backtest (no history yet at PR-C run-time); they enter
-a later iteration once months of snapshots have accumulated.
+backtest window directly — instead it emits one ``NewsItem`` representing
+"retail attention as of now", but **only when the requested window actually
+reaches the present**. The collector forward-collects these snapshots day by
+day, building our own historical store over time. That is why Apewisdom
+features are excluded from ``news_v0.yaml``'s first backtest (no history yet at
+PR-C run-time); they enter a later iteration once months have accumulated.
+
+Window semantics (the subtle part). The snapshot is stamped at the **latest
+instant still inside the half-open window ``[start, end)``** — i.e.
+``min(now, end - 1s)`` — so a natural forward-collection call like
+``collect(ticker, start, <today>)`` keeps it. Both ``base.fetch`` and
+``collector.collect`` filter on ``published_at < end`` (exclusive), so stamping
+literal end-of-day or a bare ``now`` (which can sit on/after a midnight ``end``)
+would be silently dropped — the footgun this adapter explicitly avoids. A
+**purely historical** window (whose end day is before today) returns nothing:
+Apewisdom has no history, and fabricating a past row would be a lookahead lie.
 
 Endpoint: ``GET /api/v1.0/filter/{filter}/page/{n}`` — ``filter`` defaults to
 ``all-stocks`` (surfaced as a config field); 100 results/page. We page until we
@@ -22,7 +32,7 @@ HTTP-only — uses ``requests`` (a base dep), no optional extra.
 
 from __future__ import annotations
 
-from datetime import datetime, time, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -40,19 +50,27 @@ class ApewisdomSource(BaseNewsSource):
         self.max_pages = int(max_pages)
 
     def fetch_raw(self, ticker: str, start: datetime, end: datetime) -> list[NewsItem]:
-        # Live snapshot: stamp "now" (UTC). The base class window filter keeps
-        # this item only if it falls inside [start, end) — so a historical
-        # backtest window returns nothing, which is the honest behaviour
-        # (Apewisdom has no history; we forward-collect).
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        target = ticker.upper()
 
+        # Only emit when the window reaches the present. Skip if the window
+        # hasn't started yet (now < start) or is purely historical (its end day
+        # is before today) — fabricating a past row would be a lookahead lie.
+        if now < start or end.date() < now.date():
+            return []
+
+        # Stamp at the latest instant still inside the half-open window so the
+        # downstream `published_at < end` filters (base.fetch AND collector)
+        # keep it — see the module docstring's "Window semantics" note.
+        published = min(now, end - timedelta(seconds=1))
+        if published < start:
+            return []
+
+        target = ticker.upper()
         row = self._find_ticker(target)
         if row is None:
             return []
 
         mentions = _as_int(row.get("mentions"))
-        published = datetime.combine(now.date(), time(23, 59, 59))
         title = f"{target} retail attention: {mentions} mentions"
         return [
             NewsItem(

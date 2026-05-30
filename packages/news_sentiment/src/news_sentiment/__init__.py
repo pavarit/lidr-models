@@ -1,10 +1,13 @@
 """news_sentiment — a competing model for lidr-models.
 
-Phase-0 scaffolding (PR-A): pluggable free data adapters + collector +
-deterministic lexicon scorer + three features + offline dev pipeline.
+Pluggable data adapters (edgar / gdelt / finnhub / apewisdom / eodhd / hn, plus
+the synthetic offline source; reddit + google_trends are permanent stubs) +
+collector + scorers (lexicon / finbert / llm / hybrid) + three features +
+offline dev pipeline.
 
-FinBERT + LLM scoring and the Tiingo News adapter are stubs; they land in PR-B.
-A real ``news_v0.yaml`` backtest with comparison evidence lands in PR-C.
+As of PR-B, FinBERT + live-LLM scoring are wired and the Tiingo adapter has
+been removed in the data-source rewire. A real ``news_v0.yaml`` backtest with
+comparison evidence lands in PR-C.
 """
 
 from __future__ import annotations

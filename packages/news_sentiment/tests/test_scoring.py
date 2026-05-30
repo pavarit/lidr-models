@@ -187,6 +187,20 @@ def test_parse_llm_json_tolerates_prose_and_fences() -> None:
         _parse_llm_json("absolutely no object")
 
 
+def test_llm_fallback_scorer_name_is_honored(tmp_path: Path) -> None:
+    # fallback_scorer_name must actually select the fallback (it used to be
+    # ignored — always lexicon). Default 'lexicon' resolves to LexiconScorer.
+    scorer = _llm(tmp_path, max_calls=0, max_usd=0.0, fallback_scorer_name="lexicon")
+    assert scorer._build_fallback().name == "lexicon"
+
+
+def test_llm_fallback_rejects_recursive_scorers(tmp_path: Path) -> None:
+    for bad in ("llm", "hybrid"):
+        scorer = _llm(tmp_path, fallback_scorer_name=bad)
+        with pytest.raises(ValueError, match="recurse"):
+            scorer._build_fallback()
+
+
 # --------------------------------------------------------------------------- #
 # FinBERT (fake torch + injected model — no transformers/torch needed)        #
 # --------------------------------------------------------------------------- #

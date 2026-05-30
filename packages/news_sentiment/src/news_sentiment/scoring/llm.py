@@ -293,13 +293,22 @@ class LlmScorer:
         )
 
     def _build_fallback(self):
-        from news_sentiment.scoring.lexicon import LexiconScorer
+        """Build the scorer used when the LLM budget is exhausted or a call fails.
 
-        if self.fallback_scorer_name != "lexicon":
-            # Only lexicon is dependency-free; anything heavier would defeat
-            # the point of a budget-exhaustion fallback. Document and degrade.
-            pass
-        return LexiconScorer()
+        Honors ``fallback_scorer_name`` via the scoring registry. ``llm`` and
+        ``hybrid`` are rejected because they would re-enter this exhausted path
+        (infinite recursion); only terminal scorers (``lexicon``, ``finbert``)
+        make sense as a fallback.
+        """
+        name = self.fallback_scorer_name
+        if name in ("llm", "hybrid"):
+            raise ValueError(
+                f"LlmScorer fallback_scorer_name={name!r} would recurse into the "
+                "LLM; use a terminal scorer like 'lexicon' or 'finbert'."
+            )
+        from news_sentiment.scoring import build_scorer
+
+        return build_scorer(name)
 
 
 def _parse_llm_json(text: str) -> dict:

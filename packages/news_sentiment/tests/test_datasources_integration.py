@@ -170,6 +170,56 @@ def test_apewisdom_ticker_not_found(monkeypatch) -> None:
     assert items == []
 
 
+def test_apewisdom_forward_collect_through_today_keeps_snapshot(monkeypatch) -> None:
+    """A realistic 'collect through now' window must keep the snapshot.
+
+    Regression for the footgun: the snapshot used to be stamped end-of-today
+    (in the future), which the exclusive ``published_at < end`` filter dropped
+    for a window ending today — so forward collection silently captured
+    nothing. The stamp is now ``min(now, end - 1s)``, inside the window.
+    """
+    import news_sentiment.datasources.apewisdom as mod
+
+    _patch_get(monkeypatch, mod, _APEWISDOM_PAYLOAD)
+    today = datetime.now().date().isoformat()
+    items = ApewisdomSource().fetch("GME", "2020-01-01", today)
+    assert len(items) == 1
+    # stamped strictly inside the half-open window
+    assert items[0].published_at < datetime.fromisoformat(today + "T00:00:00")
+
+
+def test_apewisdom_forward_collect_through_today_via_collector(monkeypatch) -> None:
+    """Same realistic call but through collector.collect — the real pipeline
+    path, which applies its OWN ``published_at < end`` filter. This is the exact
+    call the reviewer flagged as silently collecting nothing."""
+    from datetime import timedelta
+
+    import news_sentiment.datasources.apewisdom as mod
+    from news_sentiment.ingest.collector import collect
+
+    _patch_get(monkeypatch, mod, _APEWISDOM_PAYLOAD)
+    today = datetime.now().date().isoformat()
+    items = collect([ApewisdomSource()], "GME", "2020-01-01", today, cache_dir=None)
+    assert len(items) == 1
+
+    # And a window ending tomorrow stamps at the true 'now' (not back to end-1s).
+    tomorrow = (datetime.now() + timedelta(days=1)).date().isoformat()
+    via_tomorrow = collect([ApewisdomSource()], "GME", "2020-01-01", tomorrow, cache_dir=None)
+    assert len(via_tomorrow) == 1
+
+
+def test_apewisdom_future_only_window_returns_nothing(monkeypatch) -> None:
+    """A window that hasn't started yet (entirely in the future) emits nothing."""
+    from datetime import timedelta
+
+    import news_sentiment.datasources.apewisdom as mod
+
+    _patch_get(monkeypatch, mod, _APEWISDOM_PAYLOAD)
+    start = (datetime.now() + timedelta(days=30)).date().isoformat()
+    end = (datetime.now() + timedelta(days=60)).date().isoformat()
+    assert ApewisdomSource().fetch("GME", start, end) == []
+
+
 # --------------------------------------------------------------------------- #
 # EODHD                                                                        #
 # --------------------------------------------------------------------------- #
@@ -243,6 +293,23 @@ def test_eodhd_date_parser_handles_plain_date() -> None:
     assert _parse_eodhd_date("2023-06-15") == datetime(2023, 6, 15)
     assert _parse_eodhd_date("") is None
     assert _parse_eodhd_date(None) is None
+
+
+def test_eodhd_date_parser_converts_nonzero_offset_to_utc() -> None:
+    """Guard the tz regression on ANY runner, not just UTC ones.
+
+    A +00:00 fixture is blind: on a UTC runner astimezone(tz=None) (the old
+    bug) and astimezone(timezone.utc) (the fix) both yield 13:30, so the
+    assertion passes under buggy AND fixed code — exactly the asymmetry that
+    let the bug ship. A NON-ZERO offset makes the two diverge: the correct
+    UTC conversion of 13:30-04:00 is 17:30 regardless of the runner's local
+    timezone; the buggy machine-local conversion would give a runner-dependent
+    value. So this fails on the buggy code on every runner.
+    """
+    from news_sentiment.datasources.eodhd import _parse_eodhd_date
+
+    assert _parse_eodhd_date("2023-06-15T13:30:00-04:00") == datetime(2023, 6, 15, 17, 30, 0)
+    assert _parse_eodhd_date("2023-06-15T13:30:00+05:30") == datetime(2023, 6, 15, 8, 0, 0)
 
 
 # --------------------------------------------------------------------------- #

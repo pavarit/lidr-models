@@ -8,6 +8,12 @@ because it's free and the marginal cost of wiring it is one small module.
 Endpoint: ``GET /api/v1/search?query=...&tags=story&numericFilters=created_at_i>=...,created_at_i<...``
 ``created_at_i`` is a Unix timestamp (seconds) — the true publish time.
 
+**Caveat — single page, no pagination.** This adapter issues one request with
+``hitsPerPage`` (default 100), so a window with more than ``hitsPerPage``
+matching stories is **silently truncated** to the most-relevant page. Fine for
+its intended role (an occasional tech-name supplement); if HN ever becomes a
+primary source, add Algolia ``page=`` paging or switch to ``search_by_date``.
+
 HTTP-only — uses ``requests`` (a base dep), no optional extra.
 """
 
