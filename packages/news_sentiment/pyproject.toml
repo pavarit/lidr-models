@@ -19,13 +19,12 @@ dependencies = [
     "requests>=2.28",
 ]
 
-# Optional extras for the data adapters and scorers that aren't needed for the
-# dev smoke path. Install with e.g. `pip install -e ./packages/news_sentiment[reddit,llm]`.
-# PR-A wires the adapters as real code but lazy-imports the heavy deps so the
-# offline dev path works without any of them; PR-B will turn FinBERT + LLM on.
+# Optional extras for the scorers that aren't needed for the dev smoke path.
+# Install with e.g. `pip install -e ./packages/news_sentiment[scoring,llm]`.
+# The data adapters (edgar/gdelt/finnhub/apewisdom/eodhd/hn) are HTTP-only and
+# use `requests` from the base deps — they need NO extra. Only the FinBERT and
+# LLM scorers carry heavy deps, lazy-imported so the offline path stays clean.
 [project.optional-dependencies]
-reddit = ["praw>=7.7"]
-trends = ["pytrends>=4.9"]
 scoring = ["transformers>=4.40", "torch>=2.0"]
 llm = ["anthropic>=0.30"]
 

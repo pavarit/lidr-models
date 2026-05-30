@@ -146,7 +146,9 @@ Cross-references to Next Up items use names, not numbers — see Maintenance Ins
 
 **Implication for `news_v0.yaml` (PR-C):** keep `target.horizon_days: 5`. Longer horizons are not the SNR lever they were assumed to be, and a short horizon also matches news's short-lived impact. (Caveat: this verdict is for the TA feature set; news features have different dynamics, so 5d is the starting point, not a proven optimum for news.)
 
-### Step 2 — Revised PR-B (active next)
+### Step 2 — Revised PR-B (in review — [PR #40](https://github.com/pavarit/lidr-models/pull/40))
+
+**Status 2026-05-29:** code built and CI-gated; two key-dependent DoD items (EODHD timestamp spot-check + live LLM smoke) were verified PASS on 2026-05-30 via a live run; raw logs committed under docs/_pr_evidence/pr_b_verification/ and linked in PR #40. See Recent Changes → revised PR-B for what landed.
 
 Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-model.md`](docs/plans/task-2-news-sentiment-model.md). Headline changes from the original PR-B plan: **delete** `tiingo.py`; **convert to permanent stubs** `reddit.py` (Responsible Builder Policy) and `google_trends.py` (pytrends archived 2025-04-17); **add real adapters** `finnhub.py` (free, US company news 1yr + real-time), `apewisdom.py` (free, retail-attention live), `eodhd.py` (paid, $19.99/mo, historical news + per-article sentiment); **drop the Quiver Quant idea from PR-B** — defer to optional later if news side shows promise. FinBERT + live LLM scoring still light up in this PR through PR-A's existing cost-control harness.
 
@@ -158,6 +160,18 @@ Full spec + Claude Code kickoff prompt in [`docs/plans/task-2-news-sentiment-mod
      when paused. Keep it short: what's being built, where it was left off, mid-flight decisions. -->
 
 ## Recent Changes
+
+### 2026-05-29 — Revised PR-B: rewire news_sentiment data sources + light up FinBERT/LLM scoring ([PR #40](https://github.com/pavarit/lidr-models/pull/40))
+
+**Swapped the news data stack to the validated providers and turned on real scoring; no backtest claim (that's PR-C).** Executes the revised PR-B from the Active Task. Code built, CI-gated; two key-dependent DoD items remain (below).
+
+**Data-source rewire** (per [`docs/research/data-sources.md`](docs/research/data-sources.md)): deleted `tiingo.py` and unregistered `"tiingo"`; converted `reddit.py` + `google_trends.py` to **permanent `NotImplementedError` stubs** (Responsible Builder Policy; pytrends archived) that stay *registered* so a stale config gets the reason, not a `KeyError`; added real HTTP-only adapters `finnhub.py` (free, `FINNHUB_API_KEY`, 1yr), `apewisdom.py` (free, no auth, **live-snapshot** — stamps "now", forward-collected; a historical window correctly returns nothing), `eodhd.py` (paid $19.99/mo, `EODHD_API_TOKEN`, **5 API calls/request**), and optional `hn.py` (free, tech-skewed). All new adapters use only `requests` (base dep) → **no per-adapter extras**; pyproject just drops `[reddit]` + `[trends]`.
+
+**Scoring:** `finbert.py` wires live `ProsusAI/finbert` via `transformers` (lazy `[scoring]` extra; `sentiment = pos − neg`, `confidence = max softmax`, reads `id2label` not assumed order); `llm.py` drops a live Anthropic call into PR-A's cache + budget-cap + spend-log harness and **degrades to lexicon** on budget exhaustion or malformed JSON rather than crashing; new `hybrid.py` runs FinBERT on the bulk and escalates only sub-threshold-confidence items to the (cached, budgeted) LLM.
+
+**Tests:** new `test_datasources_integration.py` (recorded-fixture integration test per HTTP adapter, `requests.get` monkeypatched — **no live quota burned in CI**; matters since EODHD bills 5 calls/request) + scoring additions (LLM live path via a mocked Anthropic client; FinBERT via a fake `torch` + injected model so CI needs neither `transformers` nor `torch`; hybrid routing). Full suite **74 passed, all green; ruff clean**; offline `dev.yaml` smoke still runs. **Timezone bug caught by the new EODHD test (commit `ac3f407`):** `_parse_eodhd_date` used `astimezone(tz=None)` (machine-local) instead of `astimezone(timezone.utc)`, shifting EODHD `published_at` by the runner offset off-UTC — invisible on GitHub's UTC runner, surfaced on a local US-Eastern run. Fixed to UTC-naive.
+
+**Live verification (done 2026-05-30, both PASS — raw logs committed under `docs/_pr_evidence/pr_b_verification/`, linked in PR #40):** (1) EODHD timestamp spot-check — 20 AAPL articles, all in-window with 20 distinct minute-precision timestamps (consistent with true publish times, not backfilled); (2) live LLM smoke — two `claude-haiku-4-5` calls through the budget harness, correct direction (bullish +0.850, bearish −0.750), `max_calls=2` cap enforced, ~$0.00073 spend (tokens 192/52 + 198/52). The committed logs under `docs/_pr_evidence/pr_b_verification/` (removed from the branch tip in a pre-merge cleanup commit, pinned to a full SHA in PR #40) are the source of truth.
 
 ### 2026-05-29 — verify-evidence skill: combine the model-PR self-checks with the evidence workflow; trim CLAUDE.md to point at it
 

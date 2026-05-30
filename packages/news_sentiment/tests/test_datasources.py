@@ -1,9 +1,9 @@
 """Tests for the data-source layer.
 
-PR-A only exercises the synthetic source against the network. The free
-adapters are constructed (to catch import-time errors) and their fetch path
-is *not* exercised — they need internet and (for Reddit) credentials. PR-B
-will add adapter-specific integration tests with recorded fixtures.
+The synthetic source is exercised end-to-end here; the live HTTP adapters get
+recorded-fixture integration tests in ``test_datasources_integration.py`` (no
+live quota burned). This file covers the registry shape and the two permanent
+stubs (``reddit``, ``google_trends``) that must raise with a real reason.
 """
 
 from __future__ import annotations
@@ -12,13 +12,32 @@ from datetime import datetime
 
 import pytest
 from news_sentiment.datasources import REGISTRY, build_source
+from news_sentiment.datasources.google_trends import GoogleTrendsSource
+from news_sentiment.datasources.reddit import RedditSource
 from news_sentiment.datasources.synthetic import SyntheticSource
-from news_sentiment.datasources.tiingo import TiingoSource
 
 
 def test_registry_lists_expected_sources() -> None:
     names = set(REGISTRY)
-    assert {"synthetic", "edgar", "gdelt", "reddit", "google_trends", "tiingo"} <= names
+    expected = {
+        "synthetic",
+        "edgar",
+        "gdelt",
+        "finnhub",
+        "apewisdom",
+        "eodhd",
+        "hn",
+        "reddit",
+        "google_trends",
+    }
+    assert expected <= names
+
+
+def test_tiingo_is_unregistered() -> None:
+    # Tiingo was deleted in the 2026-05-28 data-source rewire.
+    assert "tiingo" not in REGISTRY
+    with pytest.raises(KeyError):
+        build_source("tiingo")
 
 
 def test_synthetic_source_is_deterministic_and_windowed() -> None:
@@ -44,7 +63,11 @@ def test_build_source_unknown_raises() -> None:
         build_source("not_a_real_source")
 
 
-def test_tiingo_stub_raises_until_pr_b() -> None:
-    src = TiingoSource()
-    with pytest.raises(NotImplementedError, match="PR-B"):
-        src.fetch("AAPL", "2024-01-01", "2024-01-15")
+def test_reddit_is_permanent_stub() -> None:
+    with pytest.raises(NotImplementedError, match="Responsible Builder Policy"):
+        RedditSource().fetch("AAPL", "2024-01-01", "2024-01-15")
+
+
+def test_google_trends_is_permanent_stub() -> None:
+    with pytest.raises(NotImplementedError, match="pytrends"):
+        GoogleTrendsSource().fetch("AAPL", "2024-01-01", "2024-01-15")
