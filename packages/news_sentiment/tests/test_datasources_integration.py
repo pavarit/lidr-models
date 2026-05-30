@@ -170,6 +170,38 @@ def test_apewisdom_ticker_not_found(monkeypatch) -> None:
     assert items == []
 
 
+def test_apewisdom_collects_through_a_natural_now_window(monkeypatch) -> None:
+    """The realistic forward-collection call must keep the snapshot.
+
+    `collect(ticker, start, <today>)` passes `end` = today at midnight. The
+    snapshot is stamped `min(now, end - 1s)`, which lands strictly inside the
+    half-open `[start, end)` window, so both `base.fetch` and the collector
+    (`published_at < end`) keep it. This is the footgun the earlier
+    end-of-day / bare-now stamp silently failed (a future-dated stamp is
+    excluded by the exclusive upper bound).
+    """
+    import news_sentiment.datasources.apewisdom as mod
+
+    _patch_get(monkeypatch, mod, _APEWISDOM_PAYLOAD)
+    today = datetime.now().date()
+    start_s = "2020-01-01"
+    end_s = today.isoformat()  # midnight today — the natural "through now" end
+    items = ApewisdomSource().fetch("GME", start_s, end_s)
+
+    assert len(items) == 1, "a through-today window must forward-collect the snapshot"
+    pub = items[0].published_at
+    assert datetime(2020, 1, 1) <= pub < datetime(today.year, today.month, today.day)
+
+
+def test_apewisdom_window_not_yet_started_returns_nothing(monkeypatch) -> None:
+    # A window entirely in the future (now < start) has no snapshot to collect.
+    import news_sentiment.datasources.apewisdom as mod
+
+    _patch_get(monkeypatch, mod, _APEWISDOM_PAYLOAD)
+    items = ApewisdomSource().fetch("GME", "2099-01-01", "2099-02-01")
+    assert items == []
+
+
 def test_apewisdom_forward_collect_through_today_keeps_snapshot(monkeypatch) -> None:
     """A realistic 'collect through now' window must keep the snapshot.
 

@@ -6,22 +6,27 @@ r/SPACs / 4chan-biz and exposes them through a simple ranking API.
 
 **Live-snapshot only.** The public API returns the *current* ranking (plus a
 24h-ago comparison), not a queryable history. So this adapter cannot serve a
-backtest window directly — instead it emits one ``NewsItem`` representing
-"retail attention as of now", but **only when the requested window actually
-reaches the present**. The collector forward-collects these snapshots day by
+backtest window directly — it emits a single ``NewsItem`` representing "retail
+attention as of now". The collector forward-collects these snapshots day by
 day, building our own historical store over time. That is why Apewisdom
 features are excluded from ``news_v0.yaml``'s first backtest (no history yet at
 PR-C run-time); they enter a later iteration once months have accumulated.
 
-Window semantics (the subtle part). The snapshot is stamped at the **latest
-instant still inside the half-open window ``[start, end)``** — i.e.
-``min(now, end - 1s)`` — so a natural forward-collection call like
-``collect(ticker, start, <today>)`` keeps it. Both ``base.fetch`` and
-``collector.collect`` filter on ``published_at < end`` (exclusive), so stamping
-literal end-of-day or a bare ``now`` (which can sit on/after a midnight ``end``)
-would be silently dropped — the footgun this adapter explicitly avoids. A
-**purely historical** window (whose end day is before today) returns nothing:
-Apewisdom has no history, and fabricating a past row would be a lookahead lie.
+**Timestamp semantics — honest now-stamp, never backdated.** The snapshot is
+stamped at the true ``now`` and is emitted **only when ``now`` falls inside the
+half-open window ``[start, end)``**. We deliberately do *not* clamp/backdate the
+stamp to squeeze it into a window that already ended: backdating a signal is the
+dangerous lookahead direction this whole project guards against (it would claim
+retail attention was known earlier than it was).
+
+Consequence for callers: **forward-collection must pass an ``end`` strictly
+after now** (e.g. ``end`` = tomorrow). Both ``base.fetch`` and
+``collector.collect`` filter on ``published_at < end`` (exclusive), so a
+now-stamped item only survives when ``now < end``. A window ending at or before
+now — e.g. ``collect(ticker, start, <today-midnight>)`` run during the day, or a
+purely historical window — correctly returns nothing (Apewisdom has no history
+to fill it). The pipeline's live forward-collection sets ``end_date`` to the
+present-or-future accordingly.
 
 Endpoint: ``GET /api/v1.0/filter/{filter}/page/{n}`` — ``filter`` defaults to
 ``all-stocks`` (surfaced as a config field); 100 results/page. We page until we
@@ -32,7 +37,7 @@ HTTP-only — uses ``requests`` (a base dep), no optional extra.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import requests
 
@@ -52,17 +57,12 @@ class ApewisdomSource(BaseNewsSource):
     def fetch_raw(self, ticker: str, start: datetime, end: datetime) -> list[NewsItem]:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        # Only emit when the window reaches the present. Skip if the window
-        # hasn't started yet (now < start) or is purely historical (its end day
-        # is before today) — fabricating a past row would be a lookahead lie.
-        if now < start or end.date() < now.date():
-            return []
-
-        # Stamp at the latest instant still inside the half-open window so the
-        # downstream `published_at < end` filters (base.fetch AND collector)
-        # keep it — see the module docstring's "Window semantics" note.
-        published = min(now, end - timedelta(seconds=1))
-        if published < start:
+        # The snapshot is "attention as of now". Emit it only when now is inside
+        # the half-open window [start, end), and stamp it at the true now — never
+        # backdate to fit a window that already closed (that would be lookahead).
+        # So a window ending at/before now, or a purely historical/future window,
+        # returns nothing. Forward-collection must use end > now (e.g. tomorrow).
+        if not (start <= now < end):
             return []
 
         target = ticker.upper()
@@ -75,7 +75,7 @@ class ApewisdomSource(BaseNewsSource):
         return [
             NewsItem(
                 ticker=ticker,
-                published_at=published,
+                published_at=now,
                 source=self.name,
                 title=title,
                 body="",
