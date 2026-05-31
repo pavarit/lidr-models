@@ -110,9 +110,16 @@ and move to Stage 2 to produce the evidence.
 
 ## Stage 2 — Produce the reviewer-facing evidence
 
+> **Destination depends on whether this PR ships a major model version.**
+> - **Major version** (a new model or a version bump that becomes part of the record): the evidence is *promoted into a durable, self-contained report folder* `docs/reports/<YYYY-MM-DD>-<model_id>-v<X.Y>/` and **kept on `main`**; the PR description **points to that folder** instead of inlining the analysis. Follow [`docs/reports/README.md`](../../../docs/reports/README.md) for the folder convention (naming, contents, `report.md`/`REPRODUCE.md` skeletons, immutability, index). The transient `docs/_pr_evidence/` steps below do **not** apply — do not delete the durable folder.
+> - **Transient experiment** (sweep, signal port, schema-only PR, robustness probe — nothing that ships a version): use the `docs/_pr_evidence/<thing>/` flow below and delete it in the cleanup commit before squash-merge.
+>
+> Either way, Stage 1 and the recompute-from-artifact mechanics in this section are identical — only the destination and lifecycle differ. This split is mirrored in `docs/reports/README.md` so the two docs stay consistent: this skill owns *how to validate and generate the evidence*; that file owns *where the durable record lives and how it's packaged*.
+
 Outcome-changing PRs need an embedded before/after chart plus a dated sanity-check table
 from **real** data (SPY, not synthetic) in the description, so a non-technical reviewer can
-approve without re-running anything. The procedure:
+approve without re-running anything. The procedure below is the transient `_pr_evidence` flow;
+for a major version, produce the same artifacts but publish them per `docs/reports/README.md`:
 
 1. **Pick a `<thing>` slug** for this PR (e.g. `rsi_port`, `calibration`, `regime_features`).
    Everything lands under `docs/_pr_evidence/<thing>/`.

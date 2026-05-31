@@ -11,7 +11,8 @@ Orientation for everything under `docs/`. Two kinds of docs live here:
 | [`research/data-sources.md`](research/data-sources.md) | durable | News / sentiment data-source comparison + the point-in-time caveat. Drives the `news_sentiment` data layer. |
 | [`signals.md`](signals.md) | durable | First-time-reader explainer for the six TA signals, with charts on real SPY data (PNGs in `signals/`). |
 | [`sample-report/report.html`](sample-report/report.html) | durable | A committed sample of the generated HTML backtest report (the SPY baseline run). |
-| [`plans/`](plans/) | disposable | Task plans handed to an AI assistant; each self-deletes on its task's merge. Currently: `task-2-news-sentiment-model.md`. |
+| [`reports/`](reports/README.md) | durable | Per-major-version backtesting report archive + the procedure every backtest follows going forward. Self-contained, reproducible, immutable folders. |
+| [`plans/`](plans/) | disposable | Task plans handed to an AI assistant; each self-deletes on its task's merge. Currently: `task-2-news-sentiment-model.md`, `pr-c-news-v0-backtest.md` (both delete on PR-C merge). |
 
 ## Start here
 
