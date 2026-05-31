@@ -10,17 +10,17 @@ Three packages under `packages/`:
 
 - **`lidr_core`** — the shared harness (backtest engine, eval/metrics, results_log + leaderboard, artifact JSON Schema + writer/loader, protocols, base data loaders, generic learners).
 - **`ta_ensemble`** — the six TA signals + pipeline. Today's only complete model.
-- **`news_sentiment`** — in development (Task 2 PR-A scaffolding: free data adapters + collector + lexicon scorer + three features + offline dev pipeline). Real backtest and news-vs-TA comparison land in PR-B/C.
+- **`news_sentiment`** — in development (Task 2). PR-A + PR-B merged (scaffolding, data adapters, lexicon scorer, features, EODHD/Finnhub/Apewisdom wiring, FinBERT + LLM scoring). Real backtest and news-vs-TA comparison land in PR-C.
 
 **New here?** Start with this README (run instructions, the [pipeline walkthrough](#how-the-pipeline-works), and [current status](#current-status-at-a-glance)), then the [`docs/` index](docs/README.md) for the ADR, the signals explainer, and research notes. [`CLAUDE.md`](CLAUDE.md) is the deep, AI-facing playbook (full history, conventions, gotchas, roadmap) — the most complete doc, and the longest.
 
 ## Current status at a glance
 
-_Updated 2026-05-29. This is the canonical "where is the project right now" summary; [`CLAUDE.md`](CLAUDE.md) carries the full experiment history behind it._
+_Updated 2026-05-30. This is the canonical "where is the project right now" summary; [`CLAUDE.md`](CLAUDE.md) carries the full experiment history behind it._
 
 - **No model beats buy-and-hold yet — and closing that gap is the whole near-term focus.** The six TA signals fed to logistic regression *and* LightGBM all land at or below the no-skill floor (best `skill_score` ≈ −0.005, the unweighted six-signal logistic). Three well-behaved configs cluster at the floor, and a target-horizon sweep (5 → 60 day) only made it worse — so the bottleneck is the **features/target, not the model class**.
 - **Next lever:** reformulate the target/features — return-magnitude regression instead of binary sign, and regime features (VIX, yield-curve slope, realized vol). Stacking, final-model serving, probability calibration, 3-class output, and lidr wiring are all gated behind a model first clearing buy-and-hold.
-- **Second model — `news_sentiment` (Task 2):** PR-A scaffolding merged (free adapters + collector + lexicon scorer + features + offline pipeline). Real backtest + news-vs-TA comparison land in PR-B/PR-C.
+- **Second model — `news_sentiment` (Task 2):** PR-A + PR-B merged (scaffolding, data adapters, EODHD/Finnhub/Apewisdom wiring, FinBERT + LLM scoring). Real backtest + news-vs-TA comparison land in PR-C.
 
 ## Quick start
 

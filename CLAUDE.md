@@ -18,7 +18,7 @@ Two-repo setup, deliberately kept separate:
 - **`lidr-models`** (this repo, Python) — a research monorepo that produces the artifacts. Three packages under `packages/`:
   - `lidr_core` — shared harness: backtest engine, eval/metrics, results_log + leaderboard, the JSON artifact contract (schema + writer + loader), the `SignalFn` / `Model` / `Feature` / `DataSource` protocols, base data loaders, generic learners (logistic / LightGBM). Owned once, reused by every model.
   - `ta_ensemble` — the six technical-analysis signals + their pipeline. Today's only complete model.
-  - `news_sentiment` — Task 2, in development. PR-A merged (scaffolding + data adapters + lexicon scorer + features). PR-B ([PR #40](https://github.com/pavarit/lidr-models/pull/40)) in review: rewired to EODHD/Finnhub/Apewisdom, reddit/google_trends converted to permanent stubs, FinBERT + LLM hybrid scoring lit up. PR-C (after PR-B) runs the real `news_v0.yaml` backtest.
+  - `news_sentiment` — Task 2, in development. PR-A merged (scaffolding + data adapters + lexicon scorer + features). PR-B ([PR #40](https://github.com/pavarit/lidr-models/pull/40)) merged: rewired to EODHD/Finnhub/Apewisdom, reddit/google_trends converted to permanent stubs, FinBERT + LLM hybrid scoring lit up. PR-C (next) runs the real `news_v0.yaml` backtest.
 
 Integration is via JSON files written to `artifacts/predictions/<model_id>/<config>-<timestamp>.json`, validated against the contract on write, plus a top-level `artifacts/manifest.json` leaderboard lidr will use to discover models. A FastAPI service is on the lidr roadmap and will be added here when the lidr side is ready to consume live predictions.
 
@@ -105,8 +105,8 @@ Non-obvious things that bit us. Each entry earned its place by causing a real pr
 Task 2 (`news_sentiment`) sequence:
 
 - **Step 1 — Horizon spike** (done 2026-05-28): Swept `horizon_days ∈ {5,10,20,60}` × 3 model classes. `skill_score` is negative at every horizon and degrades monotonically as horizon lengthens — h5 is least bad in all three model classes. The TA feature set has no directional edge at any horizon. **Keep `horizon_days: 5` for `news_v0.yaml`** (short horizon also matches news's short-lived impact). This direction is closed; full detail in [changelog](docs/changelog.md#2026-05-28--horizon-spike-longer-target-horizons-make-the-ta-model-worse-not-better).
-- **Step 2 — Revised PR-B** (in review — [PR #40](https://github.com/pavarit/lidr-models/pull/40)): Rewired data sources (EODHD $19.99/mo, Apewisdom free, Finnhub free backbone); reddit/google_trends converted to permanent stubs; FinBERT + LLM hybrid scoring lit up. Live verification passed 2026-05-30. Full spec: [docs/plans/task-2-news-sentiment-model.md](docs/plans/task-2-news-sentiment-model.md).
-- **Step 3 — PR-C** (after PR-B merges): Real `news_v0.yaml` backtest on 5–10 ticker universe; `results_log` row + refreshed manifest + comparison chart + per-period table per the evidence convention. Deletes the plan doc in the cleanup commit.
+- **Step 2 — Revised PR-B** (merged — [PR #40](https://github.com/pavarit/lidr-models/pull/40)): Rewired data sources (EODHD $19.99/mo, Apewisdom free, Finnhub free backbone); reddit/google_trends converted to permanent stubs; FinBERT + LLM hybrid scoring lit up. Live verification passed 2026-05-30. Full spec: [docs/plans/task-2-news-sentiment-model.md](docs/plans/task-2-news-sentiment-model.md).
+- **Step 3 — PR-C** (next): Real `news_v0.yaml` backtest on 5–10 ticker universe; `results_log` row + refreshed manifest + comparison chart + per-period table per the evidence convention. Deletes the plan doc in the cleanup commit.
 
 ## Roadmap
 
@@ -151,6 +151,7 @@ If you make meaningful changes, also update this file in the same session.
 - **Durable model-PR diagnostics and reporting lessons go in the `verify-evidence` skill, not a dated entry.** Dated entries fold into `docs/changelog.md`; the skill surfaces itself when the task arises.
 - **Revise a Gotcha in place when an experiment contradicts it.** Don't append a caveat elsewhere — rewrite the Gotcha with concrete numbers.
 - **Append a dated entry to Recent Changes for each session that produces real changes.** Format: `### YYYY-MM-DD — short title` + 2–4 sentences covering what was done and why. Add the full detail to `docs/changelog.md`.
+- **When a PR merges, immediately update status labels in Active Task and Architecture** — flip "in review" to "merged", remove "(after X merges)" qualifiers from downstream steps, and update the README "Current status at a glance" datestamp and any pending references. Do this in the same PR or in a same-session follow-up commit, not a separate session.
 - **When Recent Changes exceeds 7 entries, move the oldest entries to `docs/changelog.md`**, keeping only the most recent 5 in CLAUDE.md.
 - **When a Roadmap item ships, remove it from `docs/roadmap.md`** and document the completion in `docs/changelog.md`. Use names not numbers for cross-references so renumbering doesn't break them.
 - **Cross-link to lidr.** If a change affects the integration (artifact format, signal parity, what the website consumes), update lidr's CLAUDE.md in the same session.
